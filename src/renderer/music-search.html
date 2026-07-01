@@ -1,0 +1,30 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>音乐搜索 · Desk Pet</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body class="music-search-window">
+    <main class="music-search-window__main" aria-label="音乐搜索">
+      <header class="music-search-window__header">
+        <h1>音乐搜索</h1>
+        <p class="music-search-window__hint">输入歌曲或歌手，回车搜索；点击结果行或“播放”交给网易云。</p>
+      </header>
+      <form id="music-search-form" class="music-search-window__form" autocomplete="off">
+        <input
+          id="music-search-input"
+          type="search"
+          placeholder="搜索歌曲 / 歌手"
+          maxlength="80"
+          aria-label="搜索歌曲"
+        />
+        <button id="music-search-button" type="submit">搜索</button>
+      </form>
+      <div id="music-search-status" class="music-search-status" aria-live="polite"></div>
+      <ul id="music-search-results" class="music-search-results" aria-label="搜索结果"></ul>
+    </main>
+    <script src="./music-search.js"></script>
+  </body>
+</html>

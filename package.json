@@ -1,0 +1,19 @@
+{
+  "name": "desk-play-pet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Transparent desktop pet MVP using generated PNG animation frames.",
+  "main": "src/main.js",
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  },
+  "scripts": {
+    "start": "node scripts/start-electron.js",
+    "smoke": "node scripts/start-electron.js --smoke-test",
+    "test": "node --test",
+    "e2e:music": "electron scripts/e2e-music-panel.js"
+  },
+  "devDependencies": {
+    "electron": "^37.4.0"
+  }
+}

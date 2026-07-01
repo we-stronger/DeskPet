@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>和我聊聊 · Desk Pet</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body class="chat-window">
+    <main class="chat-window__main" aria-label="和我聊聊">
+      <header class="chat-window__header">
+        <div class="chat-window__title">
+          <span class="chat-window__icon" aria-hidden="true">💬</span>
+          <h1>和我聊聊</h1>
+        </div>
+        <p class="chat-window__hint">和桌宠随便聊点什么。Enter 发送，Shift + Enter 换行。</p>
+        <label class="chat-window__toggle">
+          <input id="chat-bubble-toggle" type="checkbox" />
+          <span class="chat-window__toggle-slider" aria-hidden="true"></span>
+          <span class="chat-window__toggle-label">把回复也显示在桌宠头顶的小气泡里</span>
+        </label>
+      </header>
+      <ol id="chat-log" class="chat-log" aria-live="polite" aria-label="对话历史">
+        <li class="chat-log__empty">说点什么吧～ 我会陪你聊聊。</li>
+      </ol>
+      <form id="chat-form" class="chat-window__form">
+        <label class="visually-hidden" for="chat-input">输入消息</label>
+        <textarea id="chat-input" class="chat-window__input" rows="2" placeholder="说点什么…" autocomplete="off"></textarea>
+        <button id="chat-send" class="chat-window__send" type="submit">发送</button>
+      </form>
+      <div id="chat-status" class="chat-window__status" role="status" aria-live="polite"></div>
+    </main>
+    <script src="./chat.js"></script>
+  </body>
+</html>

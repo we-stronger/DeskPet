@@ -1,0 +1,193 @@
+const { shell } = require("electron");
+const { buildSongWebUrl } = require("../netease-search");
+const neteaseClient = require("./netease-client");
+const neteaseAuth = require("./netease-auth");
+const defaultSessionStore = require("./music-session-store");
+
+function createMusicController({
+  client = neteaseClient,
+  auth = neteaseAuth,
+  sessionStore = defaultSessionStore,
+  shellApi = shell,
+} = {}) {
+  let memorySession = null;
+  let cachedProfile = null;
+
+  function sessionFromStore() {
+    if (memorySession && memorySession.cookie) return { success: true, session: memorySession, persisted: false };
+    const loaded = typeof sessionStore.loadSession === "function" ? sessionStore.loadSession() : null;
+    if (loaded && loaded.success && loaded.session && loaded.session.cookie) {
+      memorySession = loaded.session;
+      return { success: true, session: memorySession, persisted: true };
+    }
+    return { success: false, error: (loaded && loaded.error) || "not-logged-in" };
+  }
+
+  function currentCookie() {
+    const loaded = sessionFromStore();
+    return loaded.success ? loaded.session.cookie : "";
+  }
+
+  function clearLocalSession() {
+    memorySession = null;
+    cachedProfile = null;
+    if (sessionStore && typeof sessionStore.clearSession === "function") {
+      return sessionStore.clearSession();
+    }
+    return { success: true };
+  }
+
+  async function searchMusic({ keyword, query, limit } = {}) {
+    const term = typeof keyword === "string" ? keyword : query;
+    return client.search(term, { limit: Number.isFinite(Number(limit)) ? Number(limit) : 20, cookie: currentCookie() });
+  }
+
+  async function getProfile() {
+    const cookie = currentCookie();
+    if (!cookie) return { success: false, error: "not-logged-in" };
+    const result = await client.getProfile(cookie);
+    if (result && result.success) {
+      cachedProfile = result.profile;
+      return result;
+    }
+    if (result && result.error === "session-expired") {
+      clearLocalSession();
+    }
+    return result || { success: false, error: "profile-failed" };
+  }
+
+  async function getUserPlaylists({ userId } = {}) {
+    let uid = userId;
+    if (!uid) {
+      const profile = cachedProfile ? { success: true, profile: cachedProfile } : await getProfile();
+      if (!profile.success) return { success: false, error: profile.error || "not-logged-in", playlists: [] };
+      uid = profile.profile && profile.profile.userId;
+    }
+    const cookie = currentCookie();
+    if (!cookie) return { success: false, error: "not-logged-in", playlists: [] };
+    const result = await client.getUserPlaylists(uid, { cookie });
+    if (result && result.error === "session-expired") clearLocalSession();
+    return result;
+  }
+
+  async function getPlaylistDetail({ playlistId } = {}) {
+    const cookie = currentCookie();
+    if (!cookie) return { success: false, error: "not-logged-in" };
+    const result = await client.getPlaylistDetail(playlistId, { cookie });
+    if (result && result.error === "session-expired") clearLocalSession();
+    return result;
+  }
+
+  async function getDailyRecommend() {
+    const cookie = currentCookie();
+    if (!cookie) return { success: false, error: "not-logged-in", songs: [] };
+    const result = await client.getDailyRecommend({ cookie });
+    if (result && result.error === "session-expired") clearLocalSession();
+    return result;
+  }
+
+  async function getTopCharts() {
+    // Top charts are public; no login required. We still pass whatever
+    // cookie the user has so NetEase can return localized chart data.
+    return client.getTopCharts({ cookie: currentCookie() });
+  }
+
+  async function getLyric(songId) {
+    return client.getLyric(songId, { cookie: currentCookie() });
+  }
+
+  async function getFmSong() {
+    const cookie = currentCookie();
+    if (!cookie) return { success: false, error: "not-logged-in" };
+    const result = await client.getFmSong({ cookie });
+    if (result && result.error === "session-expired") clearLocalSession();
+    return result;
+  }
+
+  async function createQrKey() {
+    return auth.createQrKey();
+  }
+
+  async function createQrImage({ key } = {}) {
+    return auth.createQrImage(key);
+  }
+
+  async function checkQrStatus({ key } = {}) {
+    const result = await auth.checkQrStatus(key);
+    if (!result || !result.success || result.status !== "ok") return result;
+    if (!result.cookie) return { ...result, success: false, error: "missing-cookie" };
+    memorySession = { cookie: result.cookie };
+    cachedProfile = null;
+    const saved = sessionStore && typeof sessionStore.saveSession === "function"
+      ? sessionStore.saveSession(memorySession)
+      : { success: false, error: "session-store-unavailable" };
+    return {
+      ...result,
+      persisted: !!(saved && saved.success),
+      warning: saved && saved.success ? null : ((saved && saved.error) || "session-not-persisted"),
+    };
+  }
+
+  async function openSong({ id } = {}) {
+    if (id === undefined || id === null || id === "") return { success: false, error: "empty-id" };
+    const url = buildSongWebUrl(id);
+    try {
+      await shellApi.openExternal(url);
+      return { success: true, method: "web", target: url, songId: id };
+    } catch (error) {
+      return { success: false, error: (error && error.message) || "open-failed", target: url, songId: id };
+    }
+  }
+
+  // Receive a cookie string captured from the web-login popup window and
+  // persist it through the same session-store path the legacy QR flow used.
+  // Mirrors the side effects checkQrStatus performed on success.
+  function acceptWebLoginCookie(cookieString) {
+    if (typeof cookieString !== "string" || !cookieString) {
+      return { success: false, error: "empty-cookie" };
+    }
+    memorySession = { cookie: cookieString };
+    cachedProfile = null;
+    const saved = sessionStore && typeof sessionStore.saveSession === "function"
+      ? sessionStore.saveSession(memorySession)
+      : { success: false, error: "session-store-unavailable" };
+    return {
+      success: true,
+      cookie: cookieString,
+      persisted: !!(saved && saved.success),
+      warning: saved && saved.success ? null : ((saved && saved.error) || "session-not-persisted"),
+    };
+  }
+
+  async function logout() {
+    return clearLocalSession();
+  }
+
+  function getSessionStatus() {
+    const loaded = sessionFromStore();
+    if (!loaded.success) return { success: true, loggedIn: false, error: loaded.error };
+    return { success: true, loggedIn: true, persisted: loaded.persisted !== false };
+  }
+
+  return {
+    searchMusic,
+    getProfile,
+    getUserPlaylists,
+    getPlaylistDetail,
+    getDailyRecommend,
+    getTopCharts,
+    getLyric,
+    getFmSong,
+    createQrKey,
+    createQrImage,
+    checkQrStatus,
+    acceptWebLoginCookie,
+    openSong,
+    logout,
+    getSessionStatus,
+  };
+}
+
+module.exports = {
+  createMusicController,
+};

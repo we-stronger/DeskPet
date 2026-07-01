@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Desk Pet</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main id="stage" aria-label="desktop pet">
+      <img id="pet" alt="" draggable="false" />
+      <div id="mood-bubble" class="mood-bubble" aria-live="polite" hidden></div>
+      <div id="focus-indicator" class="focus-indicator" aria-live="polite" hidden></div>
+      <div id="clock" class="clock-widget" aria-live="polite" hidden></div>
+
+      <section id="settings-panel" class="settings-panel" aria-label="桌宠设置" hidden>
+        <div class="settings-panel__header">
+          <div class="settings-panel__title">
+            <strong>Desk Pet</strong>
+            <span>设置</span>
+          </div>
+          <button id="settings-close" class="settings-close" type="button" aria-label="关闭设置">
+            <svg aria-hidden="true" viewBox="0 0 20 20" width="16" height="16">
+              <path d="M5.5 5.5 14.5 14.5M14.5 5.5 5.5 14.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+
+        <dl class="settings-status-strip" aria-label="桌宠状态">
+          <div class="status-pill status-pill--mood"><dt>心情</dt><dd id="status-mood">50</dd></div>
+          <div class="status-pill status-pill--energy"><dt>精力</dt><dd id="status-energy">100</dd></div>
+          <div class="status-pill status-pill--affinity"><dt>好感</dt><dd id="status-affinity">0</dd></div>
+          <div class="status-pill status-pill--relationship"><dt>关系</dt><dd id="status-relationship">亲密</dd></div>
+          <div class="status-pill status-pill--action"><dt>动作</dt><dd id="status-action">idle</dd></div>
+          <div class="status-pill status-pill--combo"><dt>连击</dt><dd id="status-combo">0</dd></div>
+          <div class="status-pill status-pill--streak"><dt>陪伴</dt><dd id="status-streak">0</dd></div>
+        </dl>
+
+        <div class="settings-panel__content">
+          <section class="settings-section settings-section--appearance" aria-labelledby="appearance-title">
+            <h3 id="appearance-title" class="settings-group-title">外观</h3>
+            <label class="field-row field-row--range">
+              <span>尺寸 <output id="size-output">100%</output></span>
+              <input id="size-input" type="range" min="0" max="200" step="1" value="100" />
+            </label>
+            <label class="field-row field-row--range">
+              <span>速度 <output id="speed-output">100%</output></span>
+              <input id="speed-input" type="range" min="0" max="200" step="1" value="100" />
+            </label>
+            <label class="field-row field-row--range">
+              <span>透明度 <output id="opacity-output">100%</output></span>
+              <input id="opacity-input" type="range" min="20" max="100" step="1" value="100" />
+            </label>
+          </section>
+
+          <section class="settings-section settings-section--automation" aria-labelledby="automation-title">
+            <h3 id="automation-title" class="settings-group-title">自动化</h3>
+            <div class="toggle-grid">
+              <label class="settings-panel__check">
+                <input id="auto-behavior-input" type="checkbox" checked />
+                <span>自动行为</span>
+              </label>
+              <label class="settings-panel__check">
+                <input id="auto-walk-input" type="checkbox" checked />
+                <span>自动散步</span>
+              </label>
+              <label class="settings-panel__check">
+                <input id="mouse-react-input" type="checkbox" checked />
+                <span>靠近反应</span>
+              </label>
+              <label class="settings-panel__check">
+                <input id="daily-greeting-input" type="checkbox" checked />
+                <span>每日问候</span>
+              </label>
+              <label class="settings-panel__check">
+                <input id="clock-enabled-input" type="checkbox" checked />
+                <span>日期时间</span>
+              </label>
+            </div>
+          </section>
+
+          <section class="settings-section settings-section--focus" aria-labelledby="focus-title">
+            <h3 id="focus-title" class="settings-group-title">专注计时</h3>
+            <div class="number-grid">
+              <label class="field-row">
+                <span>专注时长</span>
+                <input id="focus-duration-input" type="number" min="1" max="180" step="1" value="25" />
+              </label>
+              <label class="field-row">
+                <span>休息时长</span>
+                <input id="break-duration-input" type="number" min="1" max="60" step="1" value="5" />
+              </label>
+            </div>
+            <label class="field-row">
+              <span>任务名称</span>
+              <input id="task-name-input" type="text" maxlength="60" placeholder="如：写文档" />
+            </label>
+            <dl class="settings-status-strip settings-status-strip--focus">
+              <div class="status-pill"><dt>状态</dt><dd id="focus-phase">空闲</dd></div>
+              <div class="status-pill"><dt>剩余</dt><dd id="focus-remaining">25:00</dd></div>
+            </dl>
+            <div class="settings-panel__buttons">
+              <button id="focus-start" type="button">开始专注</button>
+              <button id="break-start" type="button">开始休息</button>
+              <button id="focus-pause" type="button">暂停</button>
+              <button id="focus-reset" type="button">重置</button>
+            </div>
+          </section>
+
+          <section class="settings-section focus-records-section" aria-labelledby="records-title">
+            <div class="focus-records-header">
+              <h3 id="records-title" class="settings-group-title">专注记录</h3>
+              <button id="focus-records-clear" type="button" class="focus-records-clear">清空</button>
+            </div>
+            <ul id="focus-records" class="focus-records"></ul>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script src="./animation-controller.js"></script>
+    <script src="./drag-controller.js"></script>
+    <script src="./daily-state.js"></script>
+    <script src="./pet-state-controller.js"></script>
+    <script src="./pointer-action-policy.js"></script>
+    <script src="./action-config.js"></script>
+    <script src="../music-command.js"></script>
+    <script src="./pet-settings.js"></script>
+    <script src="./pet-visual-style.js"></script>
+    <script src="./hold-visual-lock.js"></script>
+    <script src="./pet-hit-test.js"></script>
+    <script src="./walk-movement.js"></script>
+    <script src="./mood-bubble.js"></script>
+    <script src="./focus-timer.js"></script>
+    <script src="./mouse-react.js"></script>
+    <script src="./clock.js"></script>
+    <script src="./widget-anchor.js"></script>
+    <script src="./widget-drag.js"></script>
+    <script src="./renderer.js"></script>
+    <script src="./music-search-view.js"></script>
+    <script src="./music-playlist-view.js"></script>
+    <script src="./music-panel.js"></script>
+  </body>
+</html>
