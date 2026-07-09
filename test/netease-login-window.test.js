@@ -11,6 +11,7 @@ const {
   startLoginWindow,
   isAuthCookie,
   cookieString,
+  sessionCookieString,
   AUTH_COOKIE_NAMES,
 } = require("../src/music/netease-login-window");
 
@@ -73,6 +74,18 @@ test("cookieString filters out non-auth and invalid entries", () => {
       { name: "MUSIC_U", value: "real" },
     ]),
     "MUSIC_U=real",
+  );
+});
+
+test("sessionCookieString keeps csrf and device cookies after authentication", () => {
+  assert.equal(
+    sessionCookieString([
+      { name: "NMTID", value: "device" },
+      { name: "__csrf", value: "csrf-token" },
+      { name: "MUSIC_U", value: "session-token" },
+      { name: "empty", value: "" },
+    ]),
+    "NMTID=device; __csrf=csrf-token; MUSIC_U=session-token",
   );
 });
 
@@ -205,6 +218,30 @@ test("startLoginWindow calls onSuccess with cookie string when MUSIC_U appears",
   assert.equal(successCookie, "MUSIC_U=session-token-abc");
   assert.equal(cancelled, false);
   assert.equal(errored, null);
+  handle.cancel();
+});
+
+test("startLoginWindow returns the complete NetEase cookie set on success", async () => {
+  const factory = makeMockFactory();
+  let successCookie = null;
+  const handle = startLoginWindow({
+    url: "https://music.163.com/login",
+    pollIntervalMs: 10,
+    timeoutMs: 1000,
+    onSuccess: (cookie) => {
+      successCookie = cookie;
+    },
+    createWindow: factory.create,
+  });
+  await waitForLoad();
+  factory.windows[0]._addCookie("__csrf", "csrf-token");
+  factory.windows[0]._addCookie("NMTID", "device-token");
+  factory.windows[0]._addCookie("MUSIC_U", "session-token");
+  await new Promise((r) => setTimeout(r, 40));
+
+  assert.match(successCookie, /MUSIC_U=session-token/);
+  assert.match(successCookie, /__csrf=csrf-token/);
+  assert.match(successCookie, /NMTID=device-token/);
   handle.cancel();
 });
 

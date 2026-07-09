@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, session, shell } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
@@ -16,25 +16,32 @@ const {
 const { clampPositionToVisibleArea } = require("./window-position");
 const { computeWindowMove } = require("./window-move-policy");
 const { PET_WINDOW_SIZE, enforcePetWindowSize } = require("./window-size-policy");
-const { sendMediaKey } = require("./media-control");
+const { sendMediaKey, minimizeNeteaseWindows, clickNeteaseSongPagePlayButton } = require("./media-control");
+const { dispatchPlaySong } = require("./play-song-dispatch");
 const {
   musicActionFromCommand,
   musicFeedbackCommandForAction,
 } = require("./music-command");
 const {
-  searchSongs,
-  fetchSongUrl,
   buildSongOrpheusTargets,
   buildSongWebUrl,
+  buildSearchWebUrl,
   buildSearchOrpheusTargets,
   buildCloudMusicArgv,
 } = require("./netease-search");
 const { createMusicController } = require("./music/music-controller");
 const auth = require("./music/netease-auth");
-const { startLoginWindow } = require("./music/netease-login-window");
+const { startLoginWindow, sessionCookieString } = require("./music/netease-login-window");
 const { chat: llmChat } = require("./llm-client");
-const { loadEnvConfig } = require("./env-config");
-loadEnvConfig({ envPath: path.join(__dirname, "..", ".env") });
+const { buildNeteaseMediaHeaders } = require("./netease-media-headers");
+const { createNeteaseAudioProxy } = require("./netease-audio-proxy");
+const { buildNeteaseSongPageUrl, buildNeteaseWebPlayScript } = require("./netease-web-player");
+// loadEnvConfig is intentionally not wired into packaged builds —
+// end users configure LLM credentials through the in-app settings
+// window (see openSettingsWindow below) which writes to
+// deskpet-settings.json in app.getPath("userData"). The module is
+// still exported for tests and for developers who want to override
+// settings.json with a .env file at dev time.
 
 // Common Windows install paths for NetEase Cloud Music. Best-effort fallback
 // after the `orpheus://` URI scheme fails.
@@ -51,6 +58,9 @@ let chatWindow;
 let tray;
 let appSettings = { ...defaultPetSettings };
 let activeLoginWindow = null;
+let nextAudioHostRequestId = 1;
+const pendingAudioHostRequests = new Map();
+let neteaseWebPlayerWindow;
 
 // Size of the standalone music-search window. Big enough to show full
 // result rows (title + artist 璺?album + duration + play button) without
@@ -67,11 +77,40 @@ const CHAT_WINDOW_SIZE = Object.freeze({ width: 480, height: 600 });
 const CHAT_WINDOW_MIN_SIZE = Object.freeze({ width: 360, height: 420 });
 const isSmokeTest = process.argv.includes("--smoke-test");
 let smokeFinished = false;
-const musicController = createMusicController();
+const musicController = createMusicController({
+  sessionCookieProvider: async () => {
+    const cookies = await session.defaultSession.cookies.get({ domain: ".music.163.com" });
+    return sessionCookieString(cookies);
+  },
+});
+const neteaseAudioProxy = createNeteaseAudioProxy();
 
-const runtimeUserDataPath = path.join(__dirname, "..", ".runtime", "user-data");
-fs.mkdirSync(runtimeUserDataPath, { recursive: true });
-app.setPath("userData", runtimeUserDataPath);
+async function withProxiedAudioUrl(result, meta = {}) {
+  if (!(result && result.success && typeof result.url === "string" && /^https?:\/\//i.test(result.url))) {
+    return result;
+  }
+  try {
+    const track = await neteaseAudioProxy.createTrack(result.url, meta);
+    return {
+      ...result,
+      directUrl: result.url,
+      url: track.proxyUrl,
+      proxy: true,
+      proxyTrackId: track.id,
+    };
+  } catch (error) {
+    return {
+      ...result,
+      success: false,
+      error: (error && error.message) || "audio-proxy-failed",
+    };
+  }
+}
+
+// userData path: use Electron's default (resolves to %APPDATA%/DeskPet
+// when packaged, %APPDATA%/desk-play-pet when running from the source
+// checkout). Don't override — the previous .runtime/user-data path
+// was dev-only and not writable when running inside app.asar.
 app.disableHardwareAcceleration();
 // Chromium 117+ removed automatic software WebGL fallback. Pet renders
 // only PNG frames but the renderer also spins up hidden pages (the
@@ -83,6 +122,7 @@ app.disableHardwareAcceleration();
 app.commandLine.appendSwitch("enable-unsafe-swiftshader");
 app.commandLine.appendSwitch("no-sandbox");
 app.commandLine.appendSwitch("disable-pinch");
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 function settingsPath() {
   return path.join(app.getPath("userData"), "deskpet-settings.json");
 }
@@ -137,6 +177,11 @@ function sendPetCommand(command) {
     return;
   }
 
+  if (command === "settings" || command === "settings:open") {
+    openSettingsWindow();
+    return;
+  }
+
   petWindow?.webContents.send("pet:command", command);
 }
 
@@ -144,6 +189,10 @@ function sendPetFeedback(command) {
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send("pet:command", command);
   }
+}
+
+function sendSettingsToPet() {
+  sendPetCommand(`settings:${encodeURIComponent(JSON.stringify(appSettings))}`);
 }
 
 // NOTE: this drives the OS-level media session, not NetEase specifically.
@@ -158,15 +207,15 @@ function sendMusicPanelCommand(view) {
 
 function handleMusicCommand(command) {
   if (command === "music:open-search" || command === "settings:open-search") {
-    sendMusicPanelCommand("search");
+    openMusicWindow();
     return;
   }
   if (command === "music:open-playlists") {
-    sendMusicPanelCommand("playlists");
+    openMusicWindow();
     return;
   }
-  if (command === "music:open-panel") {
-    sendMusicPanelCommand();
+  if (command === "music:open-panel" || command === "music:open-window") {
+    openMusicWindow();
     return;
   }
   if (command === "music:open-netease") {
@@ -179,6 +228,11 @@ function handleMusicCommand(command) {
         }
       })
       .catch(() => sendPetFeedback("music:feedback:open-failed"));
+    return;
+  }
+
+  if (command === "music:listen") {
+    petWindow?.webContents.send("pet:command", command);
     return;
   }
 
@@ -200,6 +254,10 @@ function findNetEaseExecutable() {
   return null;
 }
 
+function minimizeNeteaseBestEffort() {
+  minimizeNeteaseWindows().catch(() => {});
+}
+
 // Open NetEase with a specific orpheus:// URL, trying multiple strategies:
 // 1) shell.openExternal 閳?relies on the registered URI scheme. Resolves
 //    without error even when no visible app launches (Windows is sloppy
@@ -210,10 +268,52 @@ function findNetEaseExecutable() {
 // 3) shell.openPath on the bare exe (no URL) 閳?last resort so the app at
 //    least appears on screen.
 // Returns { success, method } describing which path worked.
-async function openNeteaseWithUrl(url, { allowBareExe = true } = {}) {
+async function openNeteaseWithUrl(url, { allowBareExe = true, silent = false } = {}) {
   if (typeof url !== "string" || !url) {
     return { success: false, error: "empty-url" };
   }
+
+  // SILENT PATH (used by music:play-song): do not report WM_COPYDATA as
+  // success. On current Windows NetEase builds it can return delivered
+  // while the client keeps playing the previous song. The registered
+  // protocol handler uses cloudmusic.exe --webcmd="%1", so use that exact
+  // path and let NetEase's own single-instance dispatcher handle the URL.
+  if (silent) {
+    const exe = findNetEaseExecutable();
+    if (exe) {
+      try {
+        const child = spawn(exe, buildCloudMusicArgv(url), {
+          detached: true,
+          stdio: "ignore",
+        });
+        child.unref();
+        child.once("error", () => { /* surfaced below */ });
+        const clicked = await clickNeteaseSongPagePlayButton({ waitMs: 1800 }).catch((error) => ({
+          success: false,
+          error: error && error.message ? error.message : "client-play-click-failed",
+        }));
+        if (clicked && clicked.success) {
+          setTimeout(minimizeNeteaseBestEffort, 1200);
+          return { success: true, method: "spawn-webcmd-click", clickMethod: clicked.method, path: exe, target: url };
+        }
+        return {
+          success: false,
+          error: (clicked && clicked.error) || "client-play-click-failed",
+          method: "spawn-webcmd",
+          path: exe,
+          target: url,
+        };
+      } catch (_error) {
+        // fall through
+      }
+    }
+
+    return { success: false, error: "client-exe-not-found", target: url };
+  }
+
+  // NON-SILENT PATH (used by music:open-netease, music:open-search):
+  // the user explicitly asked to open NetEase, so it's fine if a
+  // browser pops up. Original behavior preserved.
 
   // Strategy 1: URI scheme registration
   try {
@@ -376,7 +476,12 @@ function createTray() {
     return;
   }
 
-  const iconPath = path.join(__dirname, "..", "photo.png");
+  // photo.png ships at the project root in dev and is copied into
+  // process.resourcesPath (the "resources" folder next to app.asar)
+  // by electron-builder. Resolve the right path for both modes.
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, "photo.png")
+    : path.join(__dirname, "..", "photo.png");
   const icon = nativeImage.createFromPath(iconPath);
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon.resize({ width: 16, height: 16 }));
   tray.setToolTip("Desk Pet");
@@ -563,6 +668,21 @@ ipcMain.handle("music:open-window", () => {
   return { success: true };
 });
 
+ipcMain.handle("music:control", async (_event, { action } = {}) => {
+  const normalized = musicActionFromCommand(`music:${action}`) || musicActionFromCommand(String(action || ""));
+  if (!normalized) {
+    return { success: false, error: "invalid-action" };
+  }
+  try {
+    await sendMediaKey(normalized);
+    sendPetFeedback(musicFeedbackCommandForAction(normalized));
+    return { success: true, action: normalized };
+  } catch (_error) {
+    sendPetFeedback("music:feedback:failed");
+    return { success: false, error: "control-failed", action: normalized };
+  }
+});
+
 function openChatWindow() {
   if (chatWindow && !chatWindow.isDestroyed()) {
     if (chatWindow.isMinimized()) chatWindow.restore();
@@ -607,8 +727,157 @@ function openChatWindow() {
   });
 }
 
+let settingsWindow;
+function openSettingsWindow() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    if (settingsWindow.isMinimized()) settingsWindow.restore();
+    settingsWindow.show();
+    settingsWindow.focus();
+    return;
+  }
+
+  settingsWindow = new BrowserWindow({
+    width: 560,
+    height: 640,
+    minWidth: 420,
+    minHeight: 480,
+    resizable: true,
+    minimizable: true,
+    maximizable: false,
+    title: "设置 · Desk Pet",
+    backgroundColor: "#f7f9fc",
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  settingsWindow.removeMenu();
+  settingsWindow.once("ready-to-show", () => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.show();
+    }
+  });
+
+  settingsWindow.on("closed", () => {
+    settingsWindow = undefined;
+  });
+
+  const rendererPath = path.join(__dirname, "renderer", "settings.html");
+  settingsWindow.loadURL(pathToFileURL(rendererPath).toString()).catch((error) => {
+    logSmoke("settings loadURL rejected", error.message);
+  });
+}
+
+async function openNeteaseWebPlayer(id) {
+  if (id === undefined || id === null || id === "") {
+    return { success: false, error: "invalid-id" };
+  }
+  if (!neteaseWebPlayerWindow || neteaseWebPlayerWindow.isDestroyed()) {
+    neteaseWebPlayerWindow = new BrowserWindow({
+      width: 960,
+      height: 720,
+      show: false,
+      skipTaskbar: true,
+      autoHideMenuBar: true,
+      backgroundColor: "#ffffff",
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        backgroundThrottling: false,
+      },
+    });
+    neteaseWebPlayerWindow.removeMenu();
+    neteaseWebPlayerWindow.on("closed", () => {
+      neteaseWebPlayerWindow = undefined;
+    });
+  }
+
+  const url = buildNeteaseSongPageUrl(id);
+  try {
+    await neteaseWebPlayerWindow.loadURL(url);
+  } catch (error) {
+    if (!String(error && error.message).includes("ERR_ABORTED")) {
+      return { success: false, error: (error && error.message) || "web-load-failed" };
+    }
+  }
+
+  async function clickOfficialPlayButton() {
+    return neteaseWebPlayerWindow.webContents.executeJavaScript(buildNeteaseWebPlayScript(), true);
+  }
+
+  async function waitForWebPlayerAudible(timeoutMs = 6000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      if (
+        neteaseWebPlayerWindow &&
+        !neteaseWebPlayerWindow.isDestroyed() &&
+        neteaseWebPlayerWindow.webContents.isCurrentlyAudible()
+      ) {
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    return false;
+  }
+
+  try {
+    const result = await clickOfficialPlayButton();
+    if (result && result.success && await waitForWebPlayerAudible()) {
+      return { success: true, method: "web-player", songId: String(id), target: url };
+    }
+
+    if (!neteaseWebPlayerWindow.isDestroyed()) {
+      neteaseWebPlayerWindow.setSkipTaskbar(false);
+      neteaseWebPlayerWindow.show();
+      neteaseWebPlayerWindow.focus();
+      await clickOfficialPlayButton().catch(() => null);
+      if (await waitForWebPlayerAudible(5000)) {
+        return { success: true, method: "web-player", songId: String(id), target: url };
+      }
+    }
+
+    return {
+      success: true,
+      method: "web-player-visible",
+      songId: String(id),
+      target: url,
+      warning: (result && result.error) || "web-player-not-audible",
+    };
+  } catch (error) {
+    return { success: false, error: (error && error.message) || "web-player-failed", songId: String(id), target: url };
+  }
+}
+
+function closeNeteaseWebPlayer() {
+  if (!neteaseWebPlayerWindow || neteaseWebPlayerWindow.isDestroyed()) {
+    neteaseWebPlayerWindow = undefined;
+    return;
+  }
+  const target = neteaseWebPlayerWindow;
+  neteaseWebPlayerWindow = undefined;
+  target.close();
+}
+
+function installNeteaseMediaHeaderPatch(sess = session.defaultSession) {
+  if (!sess || !sess.webRequest || typeof sess.webRequest.onBeforeSendHeaders !== "function") {
+    return;
+  }
+  sess.webRequest.onBeforeSendHeaders(
+    {
+      urls: ["*://*.music.126.net/*", "*://music.126.net/*"],
+    },
+    (details, callback) => {
+      callback(buildNeteaseMediaHeaders(details));
+    },
+  );
+}
+
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
+  installNeteaseMediaHeaderPatch();
   appSettings = loadPetSettings(settingsPath());
   createPetWindow();
   createTray();
@@ -624,6 +893,10 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("will-quit", () => {
+  neteaseAudioProxy.close();
 });
 
 ipcMain.handle("window:move-by", (_event, { dx, dy }) => {
@@ -652,10 +925,20 @@ ipcMain.handle("window:set-size", (_event, { size }) => {
   sendPetCommand(`size:${size}`);
 });
 
-ipcMain.handle("settings:update", (_event, settings) => {
+ipcMain.handle("settings:update", (event, settings) => {
   appSettings = persistSettings({ ...appSettings, ...settings });
   refreshTrayMenu();
+  if (!petWindow || event.sender !== petWindow.webContents) {
+    sendSettingsToPet();
+  }
   return appSettings;
+});
+
+// Return the current appSettings (deep-cloned via JSON) so auxiliary
+// windows like the standalone settings panel can render the same
+// state the main window is rendering.
+ipcMain.handle("settings:get", () => {
+  return normalizePetSettings(appSettings);
 });
 
 ipcMain.handle("pet:set-shape", (_event, { rect } = {}) => {
@@ -683,11 +966,14 @@ ipcMain.handle("window:close", () => {
 ipcMain.handle("music:search", async (_event, payload = {}) => musicController.searchMusic(payload));
 
 ipcMain.handle("music:fetch-song-url", async (_event, { id } = {}) => {
-  return fetchSongUrl(id);
+  const result = await musicController.fetchSongUrl(id);
+  return withProxiedAudioUrl(result, { songId: id == null ? "" : String(id) });
 });
 
 ipcMain.handle("music:open-song", async (_event, { id } = {}) => {
+  console.log("[music:open-song] requested id=", id);
   const result = await musicController.openSong({ id });
+  console.log("[music:open-song] result=", JSON.stringify(result));
   if (result && result.success) {
     sendPetFeedback("music:feedback:open-song");
   } else {
@@ -697,54 +983,75 @@ ipcMain.handle("music:open-song", async (_event, { id } = {}) => {
 });
 
 ipcMain.handle("music:play-song", async (_event, { id } = {}) => {
-  if (typeof id !== "string" && !Number.isFinite(id)) {
-    return { success: false, error: "invalid-id" };
-  }
   console.log("[music:play-song] requested id=", id);
-  // Walk through every known orpheus:// play variant. Each one is
-  // handled by openNeteaseWithUrl which (1) tries shell.openExternal,
-  // (2) falls back to spawning cloudmusic.exe with the URL, (3) opens
-  // the bare exe as a last resort. If all variants fail to surface
-  // NetEase, fall back to the web URL so the song is at least reachable.
-  const orpheusTargets = buildSongOrpheusTargets(id);
-  console.log("[music:play-song] orpheusTargets=", JSON.stringify(orpheusTargets));
-  // If there's no local NetEase executable, prefer opening the web
-  // song page directly to avoid launching the client without the
-  // desired song loaded.
-  const exeForPlay = findNetEaseExecutable();
-  if (!exeForPlay) {
-    const webUrl = buildSongWebUrl(id);
-    try {
-      await shell.openExternal(webUrl);
-      return { success: true, method: "web", target: webUrl, songId: id };
-    } catch (error) {
-      return { success: false, error: "open-failed", details: [error && error.message], songId: id };
-    }
-  }
-  const errors = [];
-  for (const target of orpheusTargets) {
-    console.log("[music:play-song] trying target=", target);
-    const result = await openNeteaseWithUrl(target, { allowBareExe: false });
-    console.log("[music:play-song] result=", JSON.stringify(result));
-    if (result.success) {
-      return { ...result, songId: id };
-    }
-    errors.push(result.error || "open-failed");
-  }
+  closeNeteaseWebPlayer();
+  const result = await dispatchPlaySong(id, {
+    buildSongOrpheusTargets,
+    openNeteaseWithUrl,
+    buildSongWebUrl,
+    openExternal: shell.openExternal,
+  });
+  console.log("[music:play-song] result=", JSON.stringify(result));
+  return result;
+});
 
-  // Verify NetEase is actually installed before claiming fallback.
-  const webUrl = buildSongWebUrl(id);
-  try {
-    await shell.openExternal(webUrl);
-    return { success: true, method: "web", target: webUrl, songId: id };
-  } catch (error) {
-    return {
-      success: false,
-      error: "open-failed",
-      details: errors,
-      songId: id,
-    };
+ipcMain.handle("music:web-play-song", async (_event, { id } = {}) => {
+  console.log("[music:web-play-song] requested id=", id);
+  const result = await openNeteaseWebPlayer(id);
+  console.log("[music:web-play-song] result=", JSON.stringify(result));
+  return result;
+});
+
+ipcMain.handle("music:play-audio-url", async (_event, payload = {}) => {
+  if (!petWindow || petWindow.isDestroyed()) {
+    return { success: false, error: "no-pet-window" };
   }
+  if (typeof payload.url !== "string" || !/^https?:\/\//i.test(payload.url)) {
+    return { success: false, error: "invalid-url" };
+  }
+  const safePayload = {
+    url: payload.url,
+    songId: payload.songId == null ? "" : String(payload.songId),
+    title: typeof payload.title === "string" ? payload.title.slice(0, 80) : "",
+    artist: typeof payload.artist === "string" ? payload.artist.slice(0, 80) : "",
+    lyric: typeof payload.lyric === "string" ? payload.lyric : "",
+    tlyric: typeof payload.tlyric === "string" ? payload.tlyric : "",
+  };
+  console.log("[music:play-audio-url] requested id=", safePayload.songId, "title=", safePayload.title);
+  const requestId = `audio-host-${Date.now()}-${nextAudioHostRequestId++}`;
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      pendingAudioHostRequests.delete(requestId);
+      resolve({ success: false, error: "audio-host-timeout", method: "audio-host", songId: safePayload.songId });
+    }, 12000);
+    pendingAudioHostRequests.set(requestId, (result) => {
+      clearTimeout(timeout);
+      resolve({
+        success: !!(result && result.success),
+        error: result && result.error,
+        method: "audio-host",
+        songId: safePayload.songId,
+      });
+    });
+    petWindow.webContents.send(
+      "pet:command",
+      `music:play-audio-url:${encodeURIComponent(JSON.stringify({ ...safePayload, requestId }))}`,
+    );
+  });
+});
+
+ipcMain.handle("music:audio-host-result", (event, payload = {}) => {
+  if (!petWindow || event.sender !== petWindow.webContents) {
+    return { success: false, error: "invalid-sender" };
+  }
+  const requestId = typeof payload.requestId === "string" ? payload.requestId : "";
+  const resolve = pendingAudioHostRequests.get(requestId);
+  if (!resolve) {
+    return { success: false, error: "unknown-request" };
+  }
+  pendingAudioHostRequests.delete(requestId);
+  resolve(payload);
+  return { success: true };
 });
 
 ipcMain.handle("music:open-search-in-netease", async (_event, { query } = {}) => {
@@ -776,7 +1083,21 @@ ipcMain.handle("music:open-in-netease", async (_event, { url } = {}) => {
   return openNeteaseWithUrl(url, { allowBareExe: true });
 });
 
-ipcMain.handle("llm:chat", async (_event, { messages } = {}) => llmChat(messages));
+ipcMain.handle("llm:chat", async (_event, { messages } = {}) => {
+  // Pull credentials from appSettings (saved via the settings window)
+  // rather than from process.env, so end users can configure LLM via
+  // the UI without editing a .env file.
+  const llm = (appSettings && appSettings.llm) || {};
+  if (!llm.apiKey) {
+    return { success: false, error: "missing-api-key" };
+  }
+  return llmChat(messages, {
+    apiKey: llm.apiKey,
+    model: llm.model,
+    endpoint: llm.endpoint,
+    systemPrompt: llm.systemPrompt,
+  });
+});
 
 ipcMain.handle("chat:bubble-show", async (_event, { text } = {}) => {
   if (typeof text !== "string" || !text.trim()) {
@@ -894,6 +1215,38 @@ ipcMain.handle("music:get-fm-song", async () => {
   }
 });
 
+ipcMain.handle("music:playlist-tracks", async (_event, payload = {}) => {
+  try {
+    return await musicController.manipulatePlaylistTracks(payload);
+  } catch (err) {
+    return { success: false, error: err && err.message };
+  }
+});
+
+ipcMain.handle("music:like-song", async (_event, { id, like } = {}) => {
+  try {
+    return await musicController.likeSong(id, like);
+  } catch (err) {
+    return { success: false, error: err && err.message };
+  }
+});
+
+ipcMain.handle("music:get-intelligence-list", async (_event, payload = {}) => {
+  try {
+    return await musicController.getIntelligenceList(payload);
+  } catch (err) {
+    return { success: false, error: err && err.message, songs: [] };
+  }
+});
+
+ipcMain.handle("music:fm-trash", async (_event, { id } = {}) => {
+  try {
+    return await musicController.trashFmSong(id);
+  } catch (err) {
+    return { success: false, error: err && err.message };
+  }
+});
+
 function notifyRenderer(command) {
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send("pet:command", command);
@@ -912,16 +1265,7 @@ function failQrLogin() {
 }
 
 ipcMain.handle("music:qr-create-key", async () => {
-  // Bail out if a login window is already open — multiple clicks should
-  // not spawn duplicate windows.
-  if (activeLoginWindow && activeLoginWindow.window && !activeLoginWindow.window.isDestroyed()) {
-    return { success: true, pending: true, alreadyOpen: true };
-  }
-  // Best-effort: get a unikey from NetEase so the official QR is for
-  // our session. If the API call fails we still open the generic login
-  // page — the user can scan QR, use phone, or email to log in and we
-  // detect any of them via cookie polling.
-  const qrResult = await auth.createQrKey({
+  return auth.createQrKey({
     onDebug: (info) => {
       const summary = JSON.stringify(info).slice(0, 400);
       console.error("[music:qr-create-key] debug:", summary);
@@ -930,41 +1274,25 @@ ipcMain.handle("music:qr-create-key", async () => {
     console.error("[music:qr-create-key] createQrKey failed:", error && error.message);
     return { success: false, error: error && error.message };
   });
-  const url = qrResult.success && qrResult.qrUrl
-    ? qrResult.qrUrl
-    : "https://music.163.com/login";
-  activeLoginWindow = startLoginWindow({
-    url,
-    onSuccess: (cookie) => {
-      activeLoginWindow = null;
-      completeQrLogin(cookie);
-    },
-    onCancel: () => {
-      activeLoginWindow = null;
-    },
-    onError: (error) => {
-      activeLoginWindow = null;
-      console.error("[music:qr-create-key] login window error:", error);
-      failQrLogin();
-    },
-  });
-  return { success: true, pending: true };
 });
 
 ipcMain.handle("music:qr-create-image", async (_event, { key } = {}) => {
-  // The QR "image" is now rendered inside the login window itself, so
-  // there is no separate image endpoint. Return the URL for legacy
-  // callers that still want to display it.
-  if (key) return { success: true, qrUrl: auth.buildQrUrl(key) };
-  return { success: false, error: "no-active-session" };
+  return auth.createQrImage(key);
 });
 
 ipcMain.handle("music:qr-check", async (_event, { key } = {}) => {
-  // Login detection now runs entirely in the main process via cookie
-  // polling inside the login window. Older renderer builds still poll
-  // this endpoint; answer "waiting-for-scan" so they don't flip into
-  // an error state while the cookie poller does its job.
-  return { success: true, status: "waiting-for-scan" };
+  const result = await auth.checkQrStatus(key).catch((error) => ({
+    success: false,
+    error: error && error.message ? error.message : "qr-check-failed",
+  }));
+  if (result && result.success && result.status === "ok") {
+    if (!result.cookie) {
+      failQrLogin();
+      return { ...result, success: false, error: "missing-cookie" };
+    }
+    completeQrLogin(result.cookie);
+  }
+  return result;
 });
 
 // Diagnostic handlers to help users/reporters debug NetEase launching.
@@ -1015,6 +1343,3 @@ function collectRecentTaskNames(records, max = 5) {
   }
   return out;
 }
-
-
-

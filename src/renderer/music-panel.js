@@ -8,11 +8,13 @@
   let panel = null;
   let loginWindowOpen = false;
   let currentView = "home";
+  let currentPlaylistId = "";
+  let pendingAddSong = null;
+  let qrPollTimer = 0;
 
-  // The panel lives inside the pet's #stage (a 512x512 box) and is
+  // The panel lives inside the pet's #stage and is
   // positioned via style.left / style.top. The default mirrors the
-  // previous top-right layout: 512 − 340 panel width − 12 right
-  // margin = 160. currentPosition is the user-saved override; null
+  // previous top-right layout. currentPosition is the user-saved override; null
   // means "use the default".
   const DEFAULT_PANEL_POSITION = Object.freeze({ x: 160, y: 12 });
   // Panel width is fixed at 340px. Height varies with content (the
@@ -25,12 +27,15 @@
   let currentPosition = null;
 
   function clampPanelPosition({ x, y }) {
-    const widthMax = Math.max(0, 512 - PANEL_WIDTH);
+    const stage = document.querySelector("#stage");
+    const stageWidth = stage ? (stage.clientWidth || 512) : 512;
+    const stageHeight = stage ? (stage.clientHeight || 512) : 512;
+    const widthMax = Math.max(0, stageWidth - PANEL_WIDTH);
     // Read the live panel height so a tall playlist (or a collapsed
     // search bar) clamps to the right value. Fall back to a
     // reasonable default if the panel isn't in the DOM yet.
     const height = panel ? (panel.getBoundingClientRect().height || 0) : 200;
-    const heightMax = Math.max(0, 512 - Math.max(PANEL_MIN_VISIBLE, height));
+    const heightMax = Math.max(0, stageHeight - Math.max(PANEL_MIN_VISIBLE, height));
     return {
       x: Math.max(0, Math.min(widthMax, Math.round(x))),
       y: Math.max(0, Math.min(heightMax, Math.round(y))),
@@ -69,6 +74,14 @@
 
   function markLoginWindowClosed() {
     loginWindowOpen = false;
+    stopQrPolling();
+  }
+
+  function stopQrPolling() {
+    if (qrPollTimer) {
+      clearTimeout(qrPollTimer);
+      qrPollTimer = 0;
+    }
   }
 
   function statusText(error) {
@@ -82,6 +95,44 @@
       "open-failed": "打开网易云失败。",
     };
     return map[error] || (error ? `操作失败：${error}` : "操作失败。");
+  }
+
+  function escapeHtml(value) {
+    if (searchView && typeof searchView.escapeHtml === "function") {
+      return searchView.escapeHtml(value);
+    }
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function artistFromSongRow(row) {
+    const text = row?.querySelector("span")?.textContent || "";
+    return text.split(/[·璺]/)[0].trim();
+  }
+
+  function queueFromCurrentSongList() {
+    if (!panel) return [];
+    return Array.from(panel.querySelectorAll(".music-panel-song[data-song-id]")).map((item) => ({
+      id: item.getAttribute("data-song-id") || "",
+      title: item.querySelector("strong")?.textContent?.trim() || "",
+      artist: artistFromSongRow(item),
+      playlistId: currentPlaylistId,
+    })).filter((item) => item.id);
+  }
+
+  function songListFromQueue(queue) {
+    return (Array.isArray(queue) ? queue : []).map((item) => ({
+      id: item.id,
+      name: item.title || "未命名歌曲",
+      artists: item.artist ? [item.artist] : [],
+      album: "播放历史",
+      duration: 0,
+      playable: true,
+    }));
   }
 
   function setStatus(text, tone) {
@@ -101,9 +152,7 @@
   }
 
   function close() {
-    // Don't tear down the login window here — the user may still be
-    // completing login in it. Just hide the panel; the window keeps
-    // detecting cookies on its own.
+    stopQrPolling();
     if (panel) panel.hidden = true;
     notifyShapeChanged();
   }
@@ -188,14 +237,18 @@
     const actions = panel.querySelector("#music-panel-actions");
     if (profileLabel) profileLabel.textContent = nickname || "已登录";
     if (!actions) return;
-    actions.innerHTML = `<div class="music-panel-searchbar">
+    actions.innerHTML = `<div class="music-panel-session-row">
+        <span>账号：${nickname ? escapeHtml(nickname) : "已登录"}</span>
+        <button id="music-panel-logout-btn" type="button">退出登录</button>
+      </div>
+      <div class="music-panel-searchbar">
         <input id="music-panel-search-input" type="search" placeholder="输入歌曲或歌手" />
         <button id="music-panel-search-btn" type="button">搜索</button>
       </div>
       <div class="music-panel-action-row">
         <button id="music-panel-playlists-btn" type="button">我的歌单</button>
+        <button id="music-panel-history-btn" type="button">播放历史</button>
         <button id="music-panel-open-window-btn" type="button">在新窗口中打开</button>
-        <button id="music-panel-logout-btn" type="button">退出登录</button>
       </div>`;
     bindActionBar();
   }
@@ -231,7 +284,13 @@
       return true;
     }
     profileLabel.textContent = "未登录";
-    actions.innerHTML = `<div class="music-panel-action-row"><button id="music-panel-login-btn" type="button">扫码登录</button></div>`;
+    actions.innerHTML = `<div class="music-panel-login-card">
+        <div>
+          <strong>登录网易云音乐</strong>
+          <span>扫码后可以查看歌单、私人 FM 和推荐内容。</span>
+        </div>
+        <button id="music-panel-login-btn" type="button">扫码登录</button>
+      </div>`;
     bindActionBar();
     return false;
   }
@@ -240,6 +299,7 @@
     panel.querySelector("#music-panel-login-btn")?.addEventListener("click", startQrLogin);
     panel.querySelector("#music-panel-logout-btn")?.addEventListener("click", logout);
     panel.querySelector("#music-panel-playlists-btn")?.addEventListener("click", () => showPlaylists());
+    panel.querySelector("#music-panel-history-btn")?.addEventListener("click", () => showPlaybackHistory());
     panel.querySelector("#music-panel-search-btn")?.addEventListener("click", () => runSearch());
     // Pop the music UI out into a standalone resizable window. Close
     // the in-pet panel first so the pet animation isn't covered while
@@ -257,19 +317,113 @@
     });
   }
 
+  function songFromActionButton(button) {
+    const id = button && button.getAttribute("data-song-id");
+    const row = button && button.closest(".music-panel-song");
+    return {
+      id,
+      title: row?.querySelector("strong")?.textContent?.trim() || "",
+      artist: artistFromSongRow(row),
+    };
+  }
+
+  async function showAddToPlaylistChooser(song) {
+    if (!song || !song.id) return;
+    pendingAddSong = song;
+    setStatus("正在加载歌单...", "info");
+    const result = await bridge.getUserPlaylists?.().catch(() => null);
+    if (!(result && result.success && Array.isArray(result.playlists))) {
+      setStatus(statusText((result && result.error) || "network-error"), "error");
+      return;
+    }
+    const rows = result.playlists
+      .filter((playlist) => playlist.editable !== false)
+      .map((playlist) => {
+        const id = escapeHtml(playlist.id);
+        const name = escapeHtml(playlist.name || "未命名歌单");
+        const count = escapeHtml(playlist.trackCount || 0);
+        return `<button type="button" class="music-panel-add-target" data-playlist-id="${id}">
+          <strong>${name}</strong><span>${count} 首</span>
+        </button>`;
+      }).join("");
+    setStatus(`选择要加入的歌单：${song.title || song.id}`, "info");
+    setContent(`<div class="music-panel-add-chooser">
+      <button type="button" class="music-panel-back-btn" data-action="back">返回</button>
+      ${rows || '<div class="music-panel-empty">没有可用歌单。</div>'}
+    </div>`);
+  }
+
   function bindContentActions() {
+    panel.querySelectorAll(".music-panel-play-mode").forEach((button) => {
+      button.addEventListener("click", () => playVisibleQueue(button.getAttribute("data-play-mode")));
+    });
+    panel.querySelectorAll(".music-panel-like-song").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const song = songFromActionButton(button);
+        if (!song.id || typeof bridge.likeSong !== "function") return;
+        const result = await bridge.likeSong(song.id, true).catch(() => null);
+        setStatus(result && result.success ? "已加入我喜欢。" : statusText((result && result.error) || "open-failed"), result && result.success ? "ok" : "error");
+      });
+    });
+    panel.querySelectorAll(".music-panel-add-song").forEach((button) => {
+      button.addEventListener("click", () => showAddToPlaylistChooser(songFromActionButton(button)));
+    });
+    panel.querySelectorAll(".music-panel-remove-song").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const song = songFromActionButton(button);
+        if (!song.id) return;
+        if (!currentPlaylistId || typeof bridge.manipulatePlaylistTracks !== "function") {
+          setStatus("请先打开某个歌单后再删除歌曲。", "info");
+          return;
+        }
+        const result = await bridge.manipulatePlaylistTracks({ op: "del", playlistId: currentPlaylistId, songIds: [song.id] }).catch(() => null);
+        if (result && result.success) {
+          button.closest(".music-panel-song")?.remove();
+          setStatus("已从歌单删除。", "ok");
+          notifyShapeChanged();
+        } else {
+          setStatus(statusText((result && result.error) || "open-failed"), "error");
+        }
+      });
+    });
+    panel.querySelectorAll(".music-panel-add-target").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const playlistId = button.getAttribute("data-playlist-id");
+        if (!pendingAddSong || !playlistId || typeof bridge.manipulatePlaylistTracks !== "function") return;
+        const result = await bridge.manipulatePlaylistTracks({ op: "add", playlistId, songIds: [pendingAddSong.id] }).catch(() => null);
+        if (result && result.success) {
+          pendingAddSong = null;
+          await showPlaylists();
+          setStatus("已加入歌单。", "ok");
+        } else {
+          setStatus(statusText((result && result.error) || "open-failed"), "error");
+        }
+      });
+    });
     panel.querySelectorAll(".music-panel-open-song").forEach((button) => {
       button.addEventListener("click", async () => {
         const id = button.getAttribute("data-song-id");
         if (!id) return;
-        const result = typeof bridge.openMusicSong === "function"
-          ? await bridge.openMusicSong(id).catch(() => null)
-          : typeof bridge.openExternal === "function"
-            ? await bridge.openExternal(`https://music.163.com/#/song?id=${encodeURIComponent(id)}`).catch(() => null)
-            : null;
+        const row = button.closest(".music-panel-song");
+        const title = row?.querySelector("strong")?.textContent?.trim() || "";
+        const artist = (row?.querySelector("span")?.textContent || "").split("路")[0].trim();
+        const result = await root.DeskpetMusicPlaybackService.playSongWithFallback(id, {
+          bridge,
+          audioPlayer: root.DeskpetAudioPlayer,
+          queue: queueFromCurrentSongList(),
+          playlistId: currentPlaylistId,
+          meta: { title, artist },
+          setStatus,
+          logger: root.console,
+        });
         if (result && result.success) {
-          setStatus("帮你打开这首歌。", "ok");
-          bubble("帮你打开这首歌。");
+          const isAudioPlayback = result.method === "audio" || result.method === "audio-host" || result.method === "web-player";
+          const visibleWebFallback = result.method === "web-player-visible";
+          const message = visibleWebFallback
+            ? "已打开网易云网页播放器，请在窗口内确认播放。"
+            : (isAudioPlayback ? "正在后台播放这首歌。" : "帮你打开这首歌。");
+          setStatus(message, visibleWebFallback ? "info" : "ok");
+          bubble(message);
         } else {
           setStatus(statusText((result && result.error) || "open-failed"), "error");
           bubble("打开网易云失败。");
@@ -287,32 +441,113 @@
     });
   }
 
-  async function startQrLogin() {
-    // The main process owns the login window — it polls the window's
-    // session cookies for MUSIC_U so we detect login via QR scan, phone,
-    // or email. We just kick off the flow and wait for the
-    // `music:login-completed` command to arrive on the pet:command bus.
-    setStatus("正在准备扫码登录...", "info");
-    setContent('<div class="music-panel-qr music-panel-loading">正在打开登录窗口...</div>');
-    const result = await bridge.createNeteaseQrKey().catch(() => null);
-    if (!result || !result.success) {
+  async function playVisibleQueue(mode = "sequence") {
+    const queue = queueFromCurrentSongList();
+    if (!queue.length || !root.DeskpetMusicPlaybackService) {
+      setStatus("当前列表没有可播放歌曲。", "empty");
+      return;
+    }
+    const normalizedMode = mode === "shuffle" || mode === "heartbeat" || mode === "repeat-one" ? mode : "sequence";
+    const first = normalizedMode === "sequence"
+      ? queue[0]
+      : queue[Math.floor(Math.random() * queue.length)] || queue[0];
+    const result = await root.DeskpetMusicPlaybackService.playSongWithFallback(first.id, {
+      bridge,
+      audioPlayer: root.DeskpetAudioPlayer,
+      queue,
+      mode: normalizedMode,
+      playlistId: currentPlaylistId,
+      meta: { title: first.title, artist: first.artist },
+      setStatus,
+      logger: root.console,
+    });
+    if (result && result.success) {
+      const label = normalizedMode === "shuffle" ? "随机播放" : (normalizedMode === "heartbeat" ? "心动模式" : "顺序播放");
+      setStatus(`${label}已开始。`, "ok");
+      bubble(`${label}已开始。`);
+    } else {
       setStatus(statusText((result && result.error) || "open-failed"), "error");
-      setContent('<div class="music-panel-empty">登录窗口打开失败。</div>');
-      bubble("登录窗口打开失败。");
+    }
+  }
+
+  function showPlaybackHistory() {
+    currentPlaylistId = "";
+    const history = root.DeskpetMusicPlaybackService && typeof root.DeskpetMusicPlaybackService.getPlaybackState === "function"
+      ? root.DeskpetMusicPlaybackService.getPlaybackState().history
+      : [];
+    setStatus(history.length ? "这是最近播放。" : "还没有播放历史。", history.length ? "ok" : "empty");
+    setContent(searchView.renderSongList(songListFromQueue(history), { emptyText: "还没有播放历史。" }));
+  }
+
+  async function startQrLogin() {
+    stopQrPolling();
+    setStatus("正在准备扫码登录...", "info");
+    setContent('<div class="music-panel-qr music-panel-loading">正在生成二维码...</div>');
+    const keyResult = await bridge.createNeteaseQrKey().catch(() => null);
+    if (!keyResult || !keyResult.success || !keyResult.key) {
+      setStatus(statusText((keyResult && keyResult.error) || "open-failed"), "error");
+      setContent('<div class="music-panel-empty">二维码生成失败。</div>');
+      bubble("二维码生成失败。");
+      return;
+    }
+    const imageResult = typeof bridge.createNeteaseQrImage === "function"
+      ? await bridge.createNeteaseQrImage(keyResult.key).catch(() => null)
+      : null;
+    const qrUrl = (imageResult && imageResult.success && imageResult.qrUrl) || keyResult.qrUrl;
+    if (!qrUrl) {
+      setStatus("二维码生成失败。", "error");
+      setContent('<div class="music-panel-empty">二维码生成失败。</div>');
       return;
     }
     loginWindowOpen = true;
-    bubble("扫码登录就可以啦。");
-    setStatus("等待登录", "info");
+    bubble("打开网易云音乐 App 扫码登录。");
+    setStatus("等待扫码", "info");
     setContent(`<div class="music-panel-qr">
-      <p class="music-panel-qr-hint">登录窗口已打开。在窗口里扫码、用手机号或邮箱登录都行，完成后这里会自动刷新。</p>
-      <p class="music-panel-qr-status">等待登录...</p>
-      <button id="music-panel-refresh-qr" type="button">重新打开登录窗口</button>
+      <img id="music-panel-qr-image" src="${qrUrl}" alt="网易云音乐登录二维码" />
+      <p class="music-panel-qr-hint">使用网易云音乐 App 扫码确认登录。</p>
+      <p id="music-panel-qr-status" class="music-panel-qr-status">等待扫码...</p>
+      <button id="music-panel-refresh-qr" type="button">刷新二维码</button>
     </div>`);
     panel.querySelector("#music-panel-refresh-qr")?.addEventListener("click", startQrLogin);
+    qrPollTimer = setTimeout(() => pollQrLogin(keyResult.key), 1200);
+  }
+
+  async function pollQrLogin(key) {
+    qrPollTimer = 0;
+    if (!loginWindowOpen || !key) return;
+    const result = typeof bridge.checkNeteaseQr === "function"
+      ? await bridge.checkNeteaseQr(key).catch(() => null)
+      : null;
+    const statusEl = panel && panel.querySelector("#music-panel-qr-status");
+    if (!result || !result.success) {
+      const message = statusText((result && result.error) || "network-error");
+      if (statusEl) statusEl.textContent = message;
+      setStatus(message, "error");
+      qrPollTimer = setTimeout(() => pollQrLogin(key), 2400);
+      return;
+    }
+    if (result.status === "ok") {
+      markLoginWindowClosed();
+      await refreshProfile();
+      setStatus("登录成功。", "ok");
+      setContent('<div class="music-panel-empty">登录成功，可以搜索音乐或查看歌单。</div>');
+      bubble("登录成功。");
+      return;
+    }
+    if (result.status === "expired") {
+      markLoginWindowClosed();
+      setStatus("二维码已过期。", "error");
+      if (statusEl) statusEl.textContent = "二维码已过期，请刷新。";
+      return;
+    }
+    const waitingText = result.status === "waiting-for-confirm" ? "请在手机上确认登录..." : "等待扫码...";
+    if (statusEl) statusEl.textContent = waitingText;
+    setStatus(waitingText, "info");
+    qrPollTimer = setTimeout(() => pollQrLogin(key), 1800);
   }
 
   async function logout() {
+    stopQrPolling();
     await bridge.logoutMusic?.().catch(() => null);
     await refreshProfile();
     setStatus("已退出登录。", "info");
@@ -328,6 +563,7 @@
       return;
     }
     currentView = "search";
+    currentPlaylistId = "";
     setStatus("我帮你找找。", "info");
     const result = await bridge.searchMusic(keyword, 20).catch(() => null);
     if (!result || !result.success) {
@@ -343,6 +579,7 @@
 
   async function showPlaylists() {
     currentView = "playlists";
+    currentPlaylistId = "";
     setStatus("正在获取歌单...", "info");
     setContent('<div class="music-panel-loading">加载歌单中...</div>');
     const result = await bridge.getUserPlaylists().catch((err) => {
@@ -366,6 +603,7 @@
 
   async function showPlaylistDetail(playlistId) {
     if (!playlistId) return;
+    currentPlaylistId = String(playlistId);
     setStatus("正在获取歌单歌曲...", "info");
     setContent('<div class="music-panel-loading">加载歌单详情...</div>');
     const result = await bridge.getPlaylistDetail(playlistId).catch(() => null);

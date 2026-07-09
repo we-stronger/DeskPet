@@ -6,8 +6,8 @@
 //
 // Algorithm reference (mirrors Binaryify/NeteaseCloudMusicApi):
 //   text          = JSON.stringify(params)
-//   first         = AES-128-CBC(text,        PUBLIC_KEY, IV)
-//   second        = AES-128-CBC(first,       secretKey, IV)   -> base64
+//   first         = AES-128-CBC(text,        PUBLIC_KEY, IV)  -> base64
+//   second        = AES-128-CBC(firstBase64, secretKey, IV)   -> base64
 //   encSecKey     = RSA(hex(secretKey),      PUB_KEY, MODULUS) -> hex
 //   POST body     = `params=${second}&encSecKey=${encSecKey}`
 //
@@ -47,11 +47,23 @@ function rsaEncryptHex(hexString) {
   return modPow(t, e, m).toString(16).padStart(256, "0");
 }
 
-function weapiEncrypt(params) {
+const BASE62 = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+function createSecretKey() {
+  const bytes = crypto.randomBytes(16);
+  return Buffer.from(Array.from(bytes, (byte) => BASE62.charCodeAt(byte % BASE62.length)));
+}
+
+function weapiEncrypt(params, providedSecretKey) {
   const text = JSON.stringify(params);
-  const secretKey = crypto.randomBytes(16);
+  const secretKey = providedSecretKey
+    ? Buffer.from(providedSecretKey)
+    : createSecretKey();
+  if (secretKey.length !== 16) {
+    throw new Error("weapi-secret-key-must-be-16-bytes");
+  }
   const first = aesEncrypt(Buffer.from(text, "utf8"), Buffer.from(PUBLIC_KEY, "utf8"));
-  const second = aesEncrypt(first, secretKey);
+  const second = aesEncrypt(Buffer.from(first.toString("base64"), "utf8"), secretKey);
   return {
     params: second.toString("base64"),
     encSecKey: rsaEncryptHex(secretKey.toString("hex")),

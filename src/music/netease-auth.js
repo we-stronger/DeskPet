@@ -22,6 +22,7 @@
 // All requests are plain HTTPS — no weapi encryption.
 
 const https = require("node:https");
+const QRCode = require("qrcode");
 
 const REQUEST_TIMEOUT_MS = 8000;
 
@@ -65,6 +66,26 @@ function defaultRequest({ method = "GET", path, body, headers = {}, timeoutMs = 
 
 function buildQrUrl(key) {
   return `https://music.163.com/login?codekey=${encodeURIComponent(key)}`;
+}
+
+async function createQrImage(key, { toDataURL = QRCode.toDataURL } = {}) {
+  if (!key || typeof key !== "string") {
+    return { success: false, error: "empty-key" };
+  }
+  try {
+    const qrUrl = await toDataURL(buildQrUrl(key), {
+      width: 240,
+      margin: 2,
+      errorCorrectionLevel: "M",
+      color: {
+        dark: "#1f2937",
+        light: "#ffffff",
+      },
+    });
+    return { success: true, qrUrl };
+  } catch (error) {
+    return { success: false, error: (error && error.message) || "qr-image-failed" };
+  }
 }
 
 // Extract a unikey from a JSON response, tolerating both the new shape
@@ -121,17 +142,25 @@ async function createQrKey({
 }
 
 function collectCookie(headers, body) {
-  // 803 responses include the cookie as a JSON string field. Some server
-  // variants also return it via Set-Cookie headers — fall back to that.
-  if (body && typeof body.cookie === "string" && body.cookie) {
-    return body.cookie;
+  const values = new Map();
+  const attributes = new Set(["path", "domain", "expires", "max-age", "samesite", "secure", "httponly"]);
+  function addPair(text) {
+    const pair = String(text || "").trim();
+    const separator = pair.indexOf("=");
+    if (separator <= 0) return;
+    const name = pair.slice(0, separator).trim();
+    const value = pair.slice(separator + 1).trim();
+    if (!name || !value || attributes.has(name.toLowerCase())) return;
+    values.set(name, value);
+  }
+  if (body && typeof body.cookie === "string") {
+    body.cookie.split(";").forEach(addPair);
   }
   const setCookie = headers && headers["set-cookie"];
-  if (!Array.isArray(setCookie) || setCookie.length === 0) return "";
-  return setCookie
-    .map((item) => String(item).split(";")[0])
-    .filter(Boolean)
-    .join("; ");
+  if (Array.isArray(setCookie)) {
+    setCookie.forEach((item) => addPair(String(item).split(";")[0]));
+  }
+  return Array.from(values, ([name, value]) => `${name}=${value}`).join("; ");
 }
 
 // Map a numeric/string status code from the polling response to our
@@ -173,6 +202,7 @@ async function checkQrStatus(key, { request = defaultRequest } = {}) {
 
 module.exports = {
   createQrKey,
+  createQrImage,
   checkQrStatus,
   buildQrUrl,
   extractUnikey,

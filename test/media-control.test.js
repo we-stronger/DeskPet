@@ -7,8 +7,13 @@ const {
   APP_COMMANDS,
   NETEASE_CLASS_NAMES,
   buildKeybdScript,
+  buildNeteaseSongPagePlayScript,
+  buildMinimizeNeteaseScript,
+  buildUrlForwardScript,
+  clickNeteaseSongPagePlayButton,
   runPowerShell,
   sendMediaKey,
+  sendUrlToRunningNetease,
 } = require("../src/media-control");
 
 test("VK_CODES maps actions to the documented media virtual keys", () => {
@@ -44,16 +49,65 @@ test("buildKeybdScript targets NetEase via FindWindow/EnumWindows and falls back
   assert.ok(script.includes("WM_APPCOMMAND"), "should send WM_APPCOMMAND");
   assert.ok(script.includes("keybd_event"), "should fall back to keybd_event when NetEase is not found");
   assert.ok(script.includes("KEYEVENTF_EXTENDEDKEY"), "should mark the keybd_event as an extended key");
-  assert.ok(script.includes("AttachThreadInput"), "play/pause should use the AttachThreadInput trick to bypass focus stealing prevention");
-  assert.ok(script.includes("SetForegroundWindow"), "play/pause should force NetEase to foreground so the media key reaches it");
-  assert.ok(script.includes("BringWindowToTop"), "play/pause should also bring NetEase to top as a belt-and-braces measure");
-  assert.ok(script.includes("SW_RESTORE"), "play/pause should restore NetEase if minimized");
-  assert.ok(script.includes("AllowSetForegroundWindow"), "play/pause should bypass Windows focus-stealing prevention");
-  assert.ok(script.includes("appCommand == 14"), "the foreground+keybd path should only run for play/pause");
-  assert.ok(script.includes("VK_SPACE"), "play/pause should send Space (NetEase's default 播放/暂停 hotkey) instead of the media key");
+  assert.ok(!script.includes("AttachThreadInput"), "play/pause should not attach foreground input queues");
+  assert.ok(!script.includes("SetForegroundWindow"), "play/pause should not force NetEase to foreground");
+  assert.ok(!script.includes("BringWindowToTop"), "play/pause should not change z-order");
+  assert.ok(!script.includes("SW_RESTORE"), "play/pause should not restore NetEase");
+  assert.ok(!script.includes("AllowSetForegroundWindow"), "play/pause should not bypass focus-stealing prevention");
+  assert.ok(!script.includes("appCommand == 14"), "there should be no play/pause-specific foreground branch");
+  assert.ok(!script.includes("VK_SPACE"), "play/pause should not send Space");
   assert.ok(script.includes("[MediaKeySender]::Send(14, 179);"), "should call Send with appCommand=14 and vk=0xB3");
   assert.ok(!script.includes("__APP__"), "app-command placeholder should be replaced");
   assert.ok(!script.includes("__VK__"), "virtual-key placeholder should be replaced");
+});
+
+test("buildKeybdScript does not steal focus or send Space for play/pause", () => {
+  const script = buildKeybdScript(14, 0xb3);
+  assert.ok(!script.includes("AttachThreadInput"), "should not attach input queues");
+  assert.ok(!script.includes("SetForegroundWindow"), "should not force any app to foreground");
+  assert.ok(!script.includes("BringWindowToTop"), "should not change window z-order");
+  assert.ok(!script.includes("VK_SPACE"), "should not send Space to the foreground browser");
+});
+
+test("buildMinimizeNeteaseScript minimizes NetEase windows without stealing focus", () => {
+  const script = buildMinimizeNeteaseScript();
+  assert.match(script, /ShowWindow/);
+  assert.match(script, /SW_MINIMIZE = 6/);
+  assert.match(script, /OrpheusMainForm/);
+  assert.match(script, /OrpheusBrowser/);
+  assert.doesNotMatch(script, /SetForegroundWindow/);
+  assert.doesNotMatch(script, /keybd_event/);
+});
+
+test("buildNeteaseSongPagePlayScript invokes NetEase song-page play controls", () => {
+  const script = buildNeteaseSongPagePlayScript(1200);
+
+  assert.match(script, /UIAutomationClient/);
+  assert.match(script, /InvokePattern/);
+  assert.match(script, /播放/);
+  assert.match(script, /SetForegroundWindow/);
+  assert.match(script, /mouse_event/);
+  assert.match(script, /Start-Sleep -Milliseconds 1200/);
+});
+
+test("clickNeteaseSongPagePlayButton runs the generated automation script", async () => {
+  const calls = [];
+  const spawn = () => {
+    const fakeChild = new EventEmitter();
+    fakeChild.stderr = new EventEmitter();
+    fakeChild.stdout = new EventEmitter();
+    calls.push("spawned");
+    queueMicrotask(() => {
+      fakeChild.stdout.emit("data", "uia\n");
+      fakeChild.emit("exit", 0);
+    });
+    return fakeChild;
+  };
+
+  const result = await clickNeteaseSongPagePlayButton({ waitMs: 300, spawn });
+  assert.equal(result.success, true);
+  assert.equal(result.method, "client-uia");
+  assert.equal(calls.length, 1);
 });
 
 test("runPowerShell spawns powershell with windowsHide and the script as -Command", () => {
@@ -159,4 +213,94 @@ test("the play/pause script actually runs in a real PowerShell process (Windows 
   const result = await runPowerShell(script, { windowsHide: true });
   assert.equal(result.code, 0, "PowerShell should exit 0 when running the media-key script");
   assert.equal(result.stderr, "", "PowerShell should produce no stderr");
+});
+
+function makeSpawnWithStdout(stdout) {
+  return () => {
+    const fakeChild = new EventEmitter();
+    fakeChild.stderr = new EventEmitter();
+    fakeChild.stderr.on("data", () => {});
+    fakeChild.stdout = new EventEmitter();
+    queueMicrotask(() => {
+      fakeChild.stdout.emit("data", stdout);
+      fakeChild.emit("exit", 0);
+    });
+    return fakeChild;
+  };
+}
+
+test("buildUrlForwardScript encodes the URL via -EncodedCommand to avoid quoting issues", () => {
+  const url = "orpheus://play?id=123&x=y 中";
+  const command = buildUrlForwardScript(url);
+  assert.ok(!command.includes(url), "raw URL should not appear in the command line");
+  assert.ok(command.includes("-EncodedCommand"), "should use -EncodedCommand for safe transport");
+  // The C# class and URL are inside the base64-encoded payload. Decode
+  // and inspect to make sure the structure is right.
+  const match = command.match(/-EncodedCommand\s+(\S+)/);
+  assert.ok(match, "should have an -EncodedCommand argument");
+  const decoded = Buffer.from(match[1], "base64").toString("utf16le");
+  assert.ok(decoded.includes("UrlForwarder"), "should compile the UrlForwarder C# class");
+  assert.ok(decoded.includes("WM_COPYDATA"), "should send WM_COPYDATA to the NetEase window");
+  assert.ok(decoded.includes("FindWindowW"), "should find the NetEase window by class name");
+  assert.ok(decoded.includes("网易云音乐"), "should also match by NetEase window title");
+  // The URL is embedded as a C# string literal (escaped for C#, not
+  // for the command line). Verify by checking the decoded payload.
+  assert.ok(decoded.includes("orpheus://play?id=123&x=y 中"), "URL should appear verbatim in decoded payload");
+});
+
+test("buildUrlForwardScript throws on empty or non-string URLs", () => {
+  assert.throws(() => buildUrlForwardScript(""), /non-empty string/);
+  assert.throws(() => buildUrlForwardScript(null), /non-empty string/);
+  assert.throws(() => buildUrlForwardScript(undefined), /non-empty string/);
+});
+
+test("sendUrlToRunningNetease returns {found:false} when no NetEase window exists", async () => {
+  const spawn = makeSpawnWithStdout("0\n");
+  const r = await sendUrlToRunningNetease("orpheus://play?id=1", { spawn });
+  assert.equal(r.found, false);
+  assert.equal(r.sent, false);
+  assert.equal(r.windowCount, 0);
+});
+
+test("sendUrlToRunningNetease returns {found:true} when at least one window exists", async () => {
+  const spawn = makeSpawnWithStdout("1\n");
+  const r = await sendUrlToRunningNetease("orpheus://play?id=1", { spawn });
+  assert.equal(r.found, true);
+  assert.equal(r.sent, true);
+  assert.equal(r.windowCount, 1);
+});
+
+test("sendUrlToRunningNetease treats non-numeric stdout as not-found", async () => {
+  const spawn = makeSpawnWithStdout("(no output)");
+  const r = await sendUrlToRunningNetease("orpheus://play?id=1", { spawn });
+  assert.equal(r.found, false);
+  assert.equal(r.sent, false);
+  assert.equal(r.windowCount, 0);
+});
+
+test("sendUrlToRunningNetease rejects when PowerShell exits non-zero", async () => {
+  const fakeChild = new EventEmitter();
+  fakeChild.stderr = new EventEmitter();
+  fakeChild.stderr.on("data", () => {});
+  fakeChild.stdout = new EventEmitter();
+  const spawn = () => {
+    queueMicrotask(() => fakeChild.emit("exit", 1));
+    return fakeChild;
+  };
+  await sendUrlToRunningNetease("orpheus://play?id=1", { spawn }).then(
+    () => assert.fail("should have rejected"),
+    (err) => assert.match(err.message, /exited with code 1/),
+  );
+});
+
+test("the URL-forward script actually runs in a real PowerShell process (Windows only)", { skip: process.platform !== "win32" }, async () => {
+  // Add-Type compiles, SendMessage links, no syntax errors. The
+  // NetEase-targeting branch returns 0 when no NetEase window exists
+  // (the test machine doesn't have NetEase). PowerShell may emit a
+  // CLIXML progress record on stderr when Add-Type runs — that's not
+  // an error, just metadata about the assembly load.
+  const script = buildUrlForwardScript("orpheus://play?id=1");
+  const result = await runPowerShell(script, { windowsHide: true });
+  assert.equal(result.code, 0, "PowerShell should exit 0");
+  assert.match(result.stdout.trim(), /^\d+$/, "stdout should be the window count");
 });

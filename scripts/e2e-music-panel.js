@@ -231,19 +231,19 @@ async function run() {
   }
   if (stateF.songCount < 2) return fail(win, "expected songs in playlist detail", stateF);
 
-  // ----- Scenario G: click open on first song -----
+  // ----- Scenario G: click play on first song -----
   await win.webContents.executeJavaScript(`document.querySelector('.music-panel-open-song').click()`);
   await new Promise((r) => setTimeout(r, 400));
 
   const stateG = await win.webContents.executeJavaScript(`(() => ({
     calls: window.__e2eMusic ? window.__e2eMusic.getCalls() : null,
-    bridgeExists: typeof window.deskpet === 'object' && typeof window.deskpet.openMusicSong === 'function',
+    bridgeExists: typeof window.deskpet === 'object' && typeof window.deskpet.playAudioUrlInPet === 'function',
     btnExists: !!document.querySelector('.music-panel-open-song'),
     btnHasId: document.querySelector('.music-panel-open-song') && document.querySelector('.music-panel-open-song').getAttribute('data-song-id'),
   }))()`);
   log("G. openSong side effects:", stateG);
-  if (!stateG.calls || stateG.calls.length === 0) {
-    return fail(win, "expected the song open button to trigger openMusicSong", stateG);
+  if (!stateG.calls || !stateG.calls.includes("audio-host:1")) {
+    return fail(win, "expected the song button to trigger in-pet audio playback", stateG);
   }
 
   // ----- Scenario H: close and reopen reflects logged-in state -----

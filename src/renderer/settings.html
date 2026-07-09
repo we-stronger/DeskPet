@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>设置 · Desk Pet</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body class="settings-window">
+    <main class="settings-window__main" aria-label="设置">
+      <header class="settings-window__header">
+        <h1>设置</h1>
+        <p class="settings-window__hint">配置桌宠的外观、专注时长和 AI 模型。所有更改保存后会立即生效。</p>
+      </header>
+      <nav class="settings-window__tabs" role="tablist" aria-label="设置分类">
+        <button class="settings-window__tab is-active" role="tab" data-tab="appearance" aria-selected="true">🎚 外观</button>
+        <button class="settings-window__tab" role="tab" data-tab="focus" aria-selected="false">⏱ 专注</button>
+        <button class="settings-window__tab" role="tab" data-tab="llm" aria-selected="false">🤖 AI 设置</button>
+      </nav>
+      <section class="settings-window__panel is-active" data-panel="appearance" role="tabpanel">
+        <div class="settings-window__field">
+          <label class="settings-window__label" for="settings-size">尺寸 <span id="settings-size-value">100%</span></label>
+          <input id="settings-size" type="range" min="40" max="200" step="5" />
+          <p class="settings-window__help">桌宠的渲染大小，不影响窗口大小（窗口固定为 512×512）。</p>
+        </div>
+        <div class="settings-window__field">
+          <label class="settings-window__label" for="settings-speed">速度 <span id="settings-speed-value">100%</span></label>
+          <input id="settings-speed" type="range" min="20" max="200" step="5" />
+          <p class="settings-window__help">动画播放速度（100% = 正常）。</p>
+        </div>
+        <div class="settings-window__field">
+          <label class="settings-window__label" for="settings-opacity">不透明度 <span id="settings-opacity-value">100%</span></label>
+          <input id="settings-opacity" type="range" min="20" max="100" step="5" />
+          <p class="settings-window__help">整只桌宠的透明度。</p>
+        </div>
+        <div class="settings-window__field">
+          <label class="settings-window__label" for="settings-lyric-color">歌词颜色 <span id="settings-lyric-color-value">#243044</span></label>
+          <input id="settings-lyric-color" type="color" value="#243044" />
+          <p class="settings-window__help">调整音乐状态条中歌词原文和翻译的主色。</p>
+        </div>
+        <div class="settings-window__field">
+          <label class="settings-window__label" for="settings-lyric-size">歌词字号 <span id="settings-lyric-size-value">12px</span></label>
+          <input id="settings-lyric-size" type="range" min="10" max="22" step="1" />
+          <p class="settings-window__help">只影响歌词内容，不改变按钮和歌曲标题。</p>
+        </div>
+        <div class="settings-window__field">
+          <label class="settings-window__label" for="settings-control-size">功能按钮大小 <span id="settings-control-size-value">31px</span></label>
+          <input id="settings-control-size" type="range" min="24" max="44" step="1" />
+          <p class="settings-window__help">调整音乐状态条里播放、上一首、下一首等按钮大小。</p>
+        </div>
+      </section>
+      <section class="settings-window__panel" data-panel="focus" role="tabpanel" hidden>
+        <div class="settings-window__field">
+          <label class="settings-window__label" for="settings-focus-min">专注时长（分钟）</label>
+          <input id="settings-focus-min" type="number" min="1" max="180" />
+          <p class="settings-window__help">番茄钟专注阶段的时长，1–180 分钟。</p>
+        </div>
+        <div class="settings-window__field">
+          <label class="settings-window__label" for="settings-break-min">休息时长（分钟）</label>
+          <input id="settings-break-min" type="number" min="1" max="60" />
+          <p class="settings-window__help">休息阶段时长，1–60 分钟。</p>
+        </div>
+      </section>
+      <section class="settings-window__panel" data-panel="llm" role="tabpanel" hidden>
+        <div class="settings-window__field">
+          <label class="settings-window__label" for="settings-llm-apikey">ZhipuAI API Key</label>
+          <div class="settings-window__apikey-row">
+            <input id="settings-llm-apikey" type="password" autocomplete="off" placeholder="留空表示未配置" />
+            <button id="settings-llm-apikey-toggle" type="button" class="settings-window__apikey-eye" aria-label="显示或隐藏 API key">👁</button>
+          </div>
+          <p class="settings-window__help">在 ZhipuAI 开放平台申请。配置后才能在“和我聊聊”里使用 AI 对话。</p>
+        </div>
+        <div class="settings-window__field">
+          <label class="settings-window__label" for="settings-llm-model">模型</label>
+          <select id="settings-llm-model">
+            <option value="glm-4-flash">glm-4-flash（免费，速度快，推荐）</option>
+            <option value="glm-4-air">glm-4-air</option>
+            <option value="glm-4">glm-4</option>
+            <option value="glm-4-plus">glm-4-plus（更强、更贵）</option>
+          </select>
+        </div>
+        <div class="settings-window__field">
+          <label class="settings-window__label" for="settings-llm-endpoint">API 地址</label>
+          <input id="settings-llm-endpoint" type="text" autocomplete="off" />
+        </div>
+        <div class="settings-window__field">
+          <label class="settings-window__label" for="settings-llm-prompt">系统提示词（可选）</label>
+          <textarea id="settings-llm-prompt" rows="4" placeholder="例如：你是一个陪伴用户的桌面宠物，用温柔可爱的语气回复。"></textarea>
+          <div class="settings-window__prompt-actions">
+            <button id="settings-llm-prompt-reset" type="button">恢复默认</button>
+          </div>
+        </div>
+        <div class="settings-window__save-row">
+          <button id="settings-llm-save" type="button" class="settings-window__primary">保存 AI 设置</button>
+        </div>
+      </section>
+      <div id="settings-status" class="settings-window__status" role="status" aria-live="polite"></div>
+    </main>
+    <script src="./settings.js"></script>
+  </body>
+</html>

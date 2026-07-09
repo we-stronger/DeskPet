@@ -45,6 +45,7 @@ test("context menu exposes compact grouped sections and dispatches core commands
     "😤 不满",
     "🌙 休息",
     "🚶 走走",
+    "🎧 听音乐",
     "🍪 喂食",
     "✋ 摸摸头",
     "🌸 送花",
@@ -56,10 +57,11 @@ test("context menu exposes compact grouped sections and dispatches core commands
   interaction.find((item) => item.label === "✋ 摸摸头").click();
   interaction.find((item) => item.label === "🌸 送花").click();
   interaction.find((item) => item.label === "🧋 奶茶").click();
+  interaction.find((item) => item.label === "🎧 听音乐").click();
   interaction.find((item) => item.label === "💬 和我聊聊…").click();
   template.find((item) => item.label === "↺ 恢复默认").click();
   template.find((item) => item.label === "⏻ 退出").click();
-  assert.deepEqual(commands, ["feed", "pet", "gift", "milktea", "chat:open", "restore-defaults", "quit"]);
+  assert.deepEqual(commands, ["feed", "pet", "gift", "milktea", "music:listen", "chat:open", "restore-defaults", "quit"]);
 });
 
 test("context menu swaps rest for wake inside the interaction submenu when sleeping", () => {
@@ -220,7 +222,7 @@ test("tray menu exposes compact recovery commands", () => {
   assert.deepEqual(commands, ["size:100", "reset-position"]);
 });
 
-test("music submenu exposes play/pause/next/previous/search/open-netease commands", () => {
+test("music submenu exposes in-app music commands without opening the NetEase client", () => {
   const commands = [];
   const template = buildContextMenuTemplate({
     petState: { mood: 50, affinity: 0, energy: 80, sleeping: false },
@@ -236,7 +238,6 @@ test("music submenu exposes play/pause/next/previous/search/open-netease command
     "🎚 打开网易云音乐面板",
     "🔍 搜索音乐…",
     "📚 我的歌单",
-    "☁ 打开网易云音乐",
   ]);
 
   musicMenu.filter((item) => typeof item.click === "function").forEach((item) => item.click());
@@ -244,9 +245,8 @@ test("music submenu exposes play/pause/next/previous/search/open-netease command
     "music:play-pause",
     "music:next",
     "music:previous",
-    "music:open-panel",
+    "music:open-window",
     "music:open-search",
     "music:open-playlists",
-    "music:open-netease",
   ]);
 });

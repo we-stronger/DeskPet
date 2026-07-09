@@ -1,7 +1,23 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const SESSION_FILE = path.join(__dirname, "..", "..", ".runtime", "user-data", "netease-session.json");
+// Default session-file path. Resolved lazily so we can ask Electron for
+// the standard per-user data directory (which works both in dev and
+// inside the packaged app.asar where the `__dirname/../../.runtime/...`
+// path used to live is read-only).
+function defaultSessionFile() {
+  try {
+    const electron = require("electron");
+    if (electron && electron.app && typeof electron.app.getPath === "function") {
+      return path.join(electron.app.getPath("userData"), "netease-session.json");
+    }
+  } catch (_error) {
+    // Not running inside Electron (e.g. unit tests on a plain Node
+    // process). Fall back to a tmpdir-style location so the file
+    // operations still work without depending on app.asar.
+  }
+  return path.join(__dirname, "..", "..", ".runtime", "user-data", "netease-session.json");
+}
 
 function defaultSafeStorage() {
   try {
@@ -12,7 +28,7 @@ function defaultSafeStorage() {
   }
 }
 
-function createMusicSessionStore({ sessionFile = SESSION_FILE, safeStorage = defaultSafeStorage(), fsImpl = fs } = {}) {
+function createMusicSessionStore({ sessionFile = defaultSessionFile(), safeStorage = defaultSafeStorage(), fsImpl = fs } = {}) {
   function ensureDir() {
     fsImpl.mkdirSync(path.dirname(sessionFile), { recursive: true });
   }
@@ -87,7 +103,10 @@ function createMusicSessionStore({ sessionFile = SESSION_FILE, safeStorage = def
 const defaultStore = createMusicSessionStore();
 
 module.exports = {
-  SESSION_FILE,
+  // Note: SESSION_FILE is now a lazy function. Tests still call
+  // createMusicSessionStore directly with an explicit sessionFile
+  // override, so removing the eager constant is safe.
+  SESSION_FILE: defaultSessionFile(),
   createMusicSessionStore,
   saveSession: defaultStore.saveSession,
   loadSession: defaultStore.loadSession,

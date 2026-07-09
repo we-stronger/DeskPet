@@ -182,6 +182,25 @@ test("getUserPlaylists returns parsed playlists", async () => {
   assert.equal(result.playlists[0].name, "P1");
 });
 
+test("getUserPlaylists marks only owned playlists as editable", async () => {
+  const { fn } = fakeRequest([
+    fakeResponse({
+      body: {
+        code: 200,
+        playlist: [
+          { id: 11, name: "Mine", creator: { userId: 42, nickname: "me" }, subscribed: false },
+          { id: 22, name: "Subscribed", creator: { userId: 7, nickname: "other" }, subscribed: true },
+        ],
+      },
+    }),
+  ]);
+
+  const result = await client.getUserPlaylists(42, { cookie: "MUSIC_U=abc", request: fn });
+
+  assert.equal(result.playlists[0].editable, true);
+  assert.equal(result.playlists[1].editable, false);
+});
+
 test("getPlaylistDetail returns parsed playlist with tracks", async () => {
   const { fn } = fakeRequest([
     fakeResponse({
@@ -379,6 +398,35 @@ test("getLyric rejects empty songId without hitting the network", async () => {
   assert.equal(calls.length, 0);
 });
 
+test("fetchSongUrl posts ids/br with the login cookie and returns the playable URL", async () => {
+  const { fn, calls } = fakeRequest([
+    fakeResponse({
+      body: {
+        code: 200,
+        data: [{ id: 42, url: "https://m7.music.126.net/song.mp3", br: 320000, type: "mp3", code: 200 }],
+      },
+    }),
+  ]);
+  const result = await client.fetchSongUrl(42, { cookie: "MUSIC_U=abc", request: fn });
+  assert.equal(result.success, true);
+  assert.equal(result.url, "https://m7.music.126.net/song.mp3");
+  assert.equal(calls[0].method, "POST");
+  assert.equal(calls[0].path, "/api/song/enhance/player/url");
+  assert.equal(calls[0].body, "ids=%5B42%5D&br=320000");
+  assert.equal(calls[0].headers.Cookie, "MUSIC_U=abc; os=pc");
+});
+
+test("fetchSongUrl returns no-url when NetEase does not provide a playable URL", async () => {
+  const { fn } = fakeRequest([
+    fakeResponse({
+      body: { code: 200, data: [{ id: 42, url: null, code: 404 }] },
+    }),
+  ]);
+  const result = await client.fetchSongUrl(42, { cookie: "MUSIC_U=abc", request: fn });
+  assert.equal(result.success, false);
+  assert.equal(result.error, "code-404");
+});
+
 test("getFmSong returns the first song from /api/v1/radio/get", async () => {
   const { fn, calls } = fakeRequest([
     fakeResponse({
@@ -401,4 +449,88 @@ test("getFmSong requires login", async () => {
   const result = await client.getFmSong({ cookie: "" });
   assert.equal(result.success, false);
   assert.equal(result.error, "not-logged-in");
+});
+
+test("manipulatePlaylistTracks uses the compatible playlist endpoint for add", async () => {
+  const { fn, calls } = fakeRequest([
+    fakeResponse({ body: { code: 200 } }),
+  ]);
+  const result = await client.manipulatePlaylistTracks({
+    op: "add",
+    playlistId: 99,
+    songIds: [1, "2"],
+    cookie: "MUSIC_U=abc",
+    request: fn,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(calls[0].method, "POST");
+  assert.equal(calls[0].path, "/api/playlist/manipulate/tracks");
+  assert.equal(calls[0].headers.Cookie, "MUSIC_U=abc");
+  assert.match(calls[0].body, /op=add/);
+  assert.match(calls[0].body, /pid=99/);
+  assert.match(decodeURIComponent(calls[0].body), /trackIds=\["1","2"\]/);
+});
+
+test("manipulatePlaylistTracks uses the compatible playlist endpoint for delete", async () => {
+  const { fn, calls } = fakeRequest([
+    fakeResponse({ body: { code: 200 } }),
+  ]);
+  const result = await client.manipulatePlaylistTracks({
+    op: "del",
+    playlistId: 99,
+    songIds: [1],
+    cookie: "MUSIC_U=abc",
+    request: fn,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(calls[0].method, "POST");
+  assert.equal(calls[0].path, "/api/playlist/manipulate/tracks");
+  assert.match(calls[0].body, /op=del/);
+});
+
+test("likeSong posts encrypted weapi radio like request", async () => {
+  const { fn, calls } = fakeRequest([fakeResponse({ body: { code: 200 } })]);
+  const result = await client.likeSong(42, false, { cookie: "MUSIC_U=abc", request: fn });
+
+  assert.equal(result.success, true);
+  assert.equal(calls[0].path, "/weapi/radio/like");
+  assert.match(calls[0].body, /^params=.+&encSecKey=[0-9a-f]{256}$/);
+  assert.doesNotMatch(calls[0].body, /trackId=42|like=false/);
+});
+
+test("getIntelligenceList returns normalized songs from the official playmode endpoint", async () => {
+  const { fn, calls } = fakeRequest([
+    fakeResponse({
+      body: {
+        code: 200,
+        data: [
+          { songInfo: { id: 7, name: "Smart", ar: [{ name: "A" }], al: { name: "AL" }, dt: 1000 } },
+        ],
+      },
+    }),
+  ]);
+  const result = await client.getIntelligenceList({
+    songId: 1,
+    playlistId: 2,
+    count: 20,
+    cookie: "MUSIC_U=abc",
+    request: fn,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.songs[0].name, "Smart");
+  assert.equal(calls[0].path, "/api/playmode/intelligence/list");
+  assert.match(calls[0].body, /songId=1/);
+  assert.match(calls[0].body, /playlistId=2/);
+});
+
+test("trashFmSong posts the FM trash endpoint", async () => {
+  const { fn, calls } = fakeRequest([fakeResponse({ body: { code: 200 } })]);
+  const result = await client.trashFmSong(42, { cookie: "MUSIC_U=abc", request: fn });
+
+  assert.equal(result.success, true);
+  assert.equal(calls[0].path, "/api/radio/trash/add");
+  assert.match(calls[0].body, /songId=42/);
 });

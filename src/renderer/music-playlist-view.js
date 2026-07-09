@@ -26,17 +26,21 @@
   function renderPlaylistDetail(detail) {
     const playlist = detail && detail.playlist;
     const songs = detail && (detail.songs || detail.tracks);
-    // The back button is the entry point to `showPlaylists()` in the
-    // host panel's bindContentActions. data-action="back" keeps the
-    // selector stable across renames so the listener keeps working
-    // even if the button label changes.
+    const playlistName = playlist && playlist.name ? String(playlist.name) : "";
+    const isLikedPlaylist = /喜欢|我喜欢|liked/i.test(playlistName);
     const title = playlist
       ? `<div class="music-panel-detail-title">
         <button type="button" class="music-panel-back-btn" data-action="back" aria-label="返回歌单">← 返回</button>
         <span class="music-panel-detail-title__text">${escapeHtml(playlist.name)}<em>${escapeHtml(playlist.trackCount || 0)} 首</em></span>
       </div>`
       : "";
-    return `${title}${searchView.renderSongList(songs, { emptyText: "这张歌单暂时没有歌曲。" })}`;
+    const controls = `<div class="music-panel-play-modes" aria-label="歌单播放模式">
+      <button type="button" class="music-panel-play-mode" data-play-mode="sequence">顺序播放</button>
+      <button type="button" class="music-panel-play-mode" data-play-mode="shuffle">随机播放</button>
+      <button type="button" class="music-panel-play-mode" data-play-mode="repeat-one">单曲循环</button>
+      ${isLikedPlaylist ? '<button type="button" class="music-panel-play-mode music-panel-play-mode--heart" data-play-mode="heartbeat">心动模式</button>' : ""}
+    </div>`;
+    return `${title}${controls}${searchView.renderSongList(songs, { emptyText: "这张歌单暂时没有歌曲。" })}`;
   }
 
   root.DeskpetMusicPlaylistView = {

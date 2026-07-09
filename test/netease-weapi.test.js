@@ -66,6 +66,20 @@ test("weapiEncrypt produces base64 params and 256-hex-char encSecKey", () => {
   assert.match(enc.encSecKey, /^[0-9a-f]+$/);
 });
 
+test("weapiEncrypt encrypts the first AES result as a base64 string", () => {
+  const payload = {
+    id: "99",
+    tracks: '[{"type":3,"id":"1"}]',
+    csrf_token: "token",
+  };
+  const enc = weapiEncrypt(payload, Buffer.from("0123456789abcdef", "utf8"));
+
+  assert.equal(
+    enc.params,
+    "UZf/Xxjx2AWbcMyFvwQW6n0+aWeRcendmowpT6UemZnWBGnnz0drvothXXqU6cQy8JEq6bbj6ThDMqhXkq/8Al9FFnz0N6c4RO+HRCBVgaVjWoHBafM2VkQapGZKyapv3AeJvt93GX0ZXJIvfASSxw==",
+  );
+});
+
 test("weapiEncrypt uses a different secret key on each call (params differ)", () => {
   const a = weapiEncrypt({ type: 1 });
   const b = weapiEncrypt({ type: 1 });

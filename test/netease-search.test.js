@@ -29,6 +29,8 @@ test("buildSongWebUrl encodes the song id", () => {
 test("buildSongOrpheusTargets returns the known orpheus play schemes", () => {
   const targets = buildSongOrpheusTargets(42);
   assert.deepEqual(targets, [
+    "orpheus://nm/song?id=42&type=song",
+    "orpheus://nm/song?id=42",
     "orpheus://song?id=42",
     "orpheus://play?songid=42",
     "orpheus://play?id=42",
@@ -50,9 +52,9 @@ test("buildSearchOrpheusTargets returns orpheus search variants for any query", 
   assert.ok(targets.every((t) => t.includes(encodeURIComponent("周杰伦 晴天"))));
 });
 
-test("buildCloudMusicArgv returns the URL as the first positional argument", () => {
+test("buildCloudMusicArgv mirrors the registered NetEase --webcmd protocol argument", () => {
   const argv = buildCloudMusicArgv("orpheus://song?id=42");
-  assert.deepEqual(argv, ["orpheus://song?id=42"]);
+  assert.deepEqual(argv, ["--webcmd=orpheus://song?id=42"]);
 });
 
 test("normalizeSong keeps well-formed entries and drops broken ones", () => {

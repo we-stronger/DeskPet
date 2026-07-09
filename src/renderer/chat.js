@@ -134,7 +134,7 @@
   function friendlyError(code) {
     switch (code) {
       case "missing-api-key":
-        return "还没有配置 API key。请在 .env 文件中设置 ZHIPUAI_API_KEY 后重启应用。";
+        return "还没有配置 API key。请右击桌宠 → 设置 → AI 设置 中填写 ZhipuAI API key 后重试。";
       case "auth-failed":
         return "认证失败 (401)：API key 可能已失效。";
       case "rate-limited":

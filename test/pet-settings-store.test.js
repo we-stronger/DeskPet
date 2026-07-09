@@ -55,6 +55,19 @@ test("normalizes missing and invalid settings to safe defaults", () => {
       clockEnabled: true,
       musicPanelPosition: null,
       clockPosition: null,
+      focusIndicatorPosition: null,
+      musicStatusPosition: null,
+      musicLyricStyle: {
+        color: "#243044",
+        fontSize: 12,
+        controlSize: 31,
+      },
+      llm: {
+        apiKey: "",
+        model: "glm-4-flash",
+        endpoint: "https://open.bigmodel.cn/api/paas/v4",
+        systemPrompt: "",
+      },
     },
   );
   assert.deepEqual(
@@ -121,6 +134,19 @@ test("loads and saves normalized settings as JSON", () => {
     clockEnabled: true,
     musicPanelPosition: null,
     clockPosition: null,
+    focusIndicatorPosition: null,
+    musicStatusPosition: null,
+    musicLyricStyle: {
+      color: "#243044",
+      fontSize: 12,
+      controlSize: 31,
+    },
+    llm: {
+      apiKey: "",
+      model: "glm-4-flash",
+      endpoint: "https://open.bigmodel.cn/api/paas/v4",
+      systemPrompt: "",
+    },
   });
   assert.deepEqual(loadPetSettings(settingsPath), {
     sizePercent: 25,
@@ -153,6 +179,19 @@ test("loads and saves normalized settings as JSON", () => {
     clockEnabled: true,
     musicPanelPosition: null,
     clockPosition: null,
+    focusIndicatorPosition: null,
+    musicStatusPosition: null,
+    musicLyricStyle: {
+      color: "#243044",
+      fontSize: 12,
+      controlSize: 31,
+    },
+    llm: {
+      apiKey: "",
+      model: "glm-4-flash",
+      endpoint: "https://open.bigmodel.cn/api/paas/v4",
+      systemPrompt: "",
+    },
   });
 });
 
@@ -201,9 +240,13 @@ test("normalizes user-saved widget positions and drops garbage values", () => {
   const valid = normalizePetSettings({
     musicPanelPosition: { x: 12.4, y: 99.6 },
     clockPosition: { x: 200, y: 8 },
+    focusIndicatorPosition: { x: 9.5, y: 301.2 },
+    musicStatusPosition: { x: 144.4, y: 455.8 },
   });
   assert.deepEqual(valid.musicPanelPosition, { x: 12, y: 100 });
   assert.deepEqual(valid.clockPosition, { x: 200, y: 8 });
+  assert.deepEqual(valid.focusIndicatorPosition, { x: 10, y: 301 });
+  assert.deepEqual(valid.musicStatusPosition, { x: 144, y: 456 });
 
   // Non-finite coords, wrong types, or null all become null so the
   // renderer falls back to the default position rather than placing
@@ -211,17 +254,47 @@ test("normalizes user-saved widget positions and drops garbage values", () => {
   const garbage = normalizePetSettings({
     musicPanelPosition: { x: Number.NaN, y: "12" },
     clockPosition: { x: Infinity, y: -Infinity },
+    focusIndicatorPosition: { x: "bad", y: 10 },
+    musicStatusPosition: { x: 10, y: Number.NaN },
   });
   assert.equal(garbage.musicPanelPosition, null);
   assert.equal(garbage.clockPosition, null);
+  assert.equal(garbage.focusIndicatorPosition, null);
+  assert.equal(garbage.musicStatusPosition, null);
 
   // Missing entirely is also null (matches defaultPetSettings).
   const missing = normalizePetSettings({});
   assert.equal(missing.musicPanelPosition, null);
   assert.equal(missing.clockPosition, null);
+  assert.equal(missing.focusIndicatorPosition, null);
+  assert.equal(missing.musicStatusPosition, null);
 });
 
 test("settings default exposes null widget positions so the renderer can fall back", () => {
   assert.equal(defaultPetSettings.musicPanelPosition, null);
   assert.equal(defaultPetSettings.clockPosition, null);
+  assert.equal(defaultPetSettings.focusIndicatorPosition, null);
+  assert.equal(defaultPetSettings.musicStatusPosition, null);
+});
+
+test("normalizes music lyric style settings", () => {
+  assert.deepEqual(defaultPetSettings.musicLyricStyle, {
+    color: "#243044",
+    fontSize: 12,
+    controlSize: 31,
+  });
+
+  const customized = normalizePetSettings({
+    musicLyricStyle: { color: "#7c3aed", fontSize: 17.4, controlSize: 39.2 },
+  });
+  assert.deepEqual(customized.musicLyricStyle, {
+    color: "#7c3aed",
+    fontSize: 17,
+    controlSize: 39,
+  });
+
+  const fallback = normalizePetSettings({
+    musicLyricStyle: { color: "javascript:bad", fontSize: 999, controlSize: 8 },
+  });
+  assert.deepEqual(fallback.musicLyricStyle, defaultPetSettings.musicLyricStyle);
 });

@@ -1,5 +1,6 @@
 (function attachPetVisualStyle(root) {
   const MAX_VISUAL_SCALE = 2;
+  const BASE_VISUAL_SIZE = 512;
 
   function clampScale(scale) {
     const value = Number(scale);
@@ -20,7 +21,9 @@
       width,
       height,
       left: Math.round((stageWidth - width) / 2),
-      bottom: 0,
+      bottom: stageHeight > BASE_VISUAL_SIZE && height > 0
+        ? Math.max(0, Math.round((stageHeight - height) / 2))
+        : 0,
     };
   }
 

@@ -9,6 +9,7 @@ function createMusicController({
   auth = neteaseAuth,
   sessionStore = defaultSessionStore,
   shellApi = shell,
+  sessionCookieProvider = null,
 } = {}) {
   let memorySession = null;
   let cachedProfile = null;
@@ -26,6 +27,25 @@ function createMusicController({
   function currentCookie() {
     const loaded = sessionFromStore();
     return loaded.success ? loaded.session.cookie : "";
+  }
+
+  async function currentWriteCookie() {
+    if (typeof sessionCookieProvider !== "function") return currentCookie();
+    try {
+      const cookie = await sessionCookieProvider();
+      if (typeof cookie !== "string" || !/(?:^|;\s*)(?:MUSIC_U|__MUSIC_U|MUSIC_A)=/.test(cookie)) {
+        return currentCookie();
+      }
+      if (cookie !== currentCookie()) {
+        memorySession = { cookie };
+        if (sessionStore && typeof sessionStore.saveSession === "function") {
+          sessionStore.saveSession(memorySession);
+        }
+      }
+      return cookie;
+    } catch (_error) {
+      return currentCookie();
+    }
   }
 
   function clearLocalSession() {
@@ -96,10 +116,50 @@ function createMusicController({
     return client.getLyric(songId, { cookie: currentCookie() });
   }
 
+  async function fetchSongUrl(songId) {
+    return client.fetchSongUrl(songId, { cookie: currentCookie() });
+  }
+
   async function getFmSong() {
     const cookie = currentCookie();
     if (!cookie) return { success: false, error: "not-logged-in" };
     const result = await client.getFmSong({ cookie });
+    if (result && result.error === "session-expired") clearLocalSession();
+    return result;
+  }
+
+  async function manipulatePlaylistTracks({ op, playlistId, songIds } = {}) {
+    const cookie = await currentWriteCookie();
+    if (!cookie) return { success: false, error: "not-logged-in" };
+    const result = await client.manipulatePlaylistTracks({ op, playlistId, songIds, cookie });
+    if (result && result.error === "session-expired") clearLocalSession();
+    return result;
+  }
+
+  async function likeSong(songId, like = true) {
+    const cookie = await currentWriteCookie();
+    if (!cookie) return { success: false, error: "not-logged-in" };
+    const result = await client.likeSong(songId, like, { cookie });
+    if (result && result.error === "session-expired") clearLocalSession();
+    return result;
+  }
+
+  async function getIntelligenceList({ songId, playlistId, startSongId, count } = {}) {
+    const cookie = currentCookie();
+    if (!cookie) return { success: false, error: "not-logged-in", songs: [] };
+    const payload = { songId, playlistId, count, cookie };
+    if (startSongId !== undefined && startSongId !== null && startSongId !== "") {
+      payload.startSongId = startSongId;
+    }
+    const result = await client.getIntelligenceList(payload);
+    if (result && result.error === "session-expired") clearLocalSession();
+    return result;
+  }
+
+  async function trashFmSong(songId) {
+    const cookie = currentCookie();
+    if (!cookie) return { success: false, error: "not-logged-in" };
+    const result = await client.trashFmSong(songId, { cookie });
     if (result && result.error === "session-expired") clearLocalSession();
     return result;
   }
@@ -177,7 +237,12 @@ function createMusicController({
     getDailyRecommend,
     getTopCharts,
     getLyric,
+    fetchSongUrl,
     getFmSong,
+    manipulatePlaylistTracks,
+    likeSong,
+    getIntelligenceList,
+    trashFmSong,
     createQrKey,
     createQrImage,
     checkQrStatus,

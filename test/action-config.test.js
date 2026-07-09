@@ -23,8 +23,14 @@ test("keeps drag visually stable by holding a single frame", () => {
   assert.equal(actions.drag.loop, true);
 });
 
-test("defines music as a six-frame looping action", () => {
-  assert.deepEqual(actions.music, { frames: 6, fps: 6, loop: true });
+test("defines music as a six-frame intro that loops frames 3 and 5 forever", () => {
+  // Intro plays frames 1..6 once, then alternates frames 3 and 5
+  // indefinitely so we don't loop back through the frames that have
+  // background-removal artifacts (horizontal stripes).
+  assert.equal(actions.music.frames, 6);
+  assert.equal(actions.music.fps, 6);
+  assert.equal(actions.music.loop, true);
+  assert.deepEqual(actions.music.loopFrames, [3, 5]);
 });
 
 test("every configured action has matching PNG frame files", () => {

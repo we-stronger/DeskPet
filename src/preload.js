@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld("deskpet", {
   updateSettings(settings) {
     return ipcRenderer.invoke("settings:update", settings);
   },
+  getSettings() {
+    return ipcRenderer.invoke("settings:get");
+  },
   searchMusic(keyword, limit = 20) {
     return ipcRenderer.invoke("music:search", { keyword, query: keyword, limit });
   },
@@ -27,6 +30,15 @@ contextBridge.exposeInMainWorld("deskpet", {
   },
   playSong(id) {
     return ipcRenderer.invoke("music:play-song", { id });
+  },
+  playAudioUrlInPet(payload) {
+    return ipcRenderer.invoke("music:play-audio-url", payload || {});
+  },
+  webPlaySong(id) {
+    return ipcRenderer.invoke("music:web-play-song", { id });
+  },
+  reportAudioHostResult(payload) {
+    return ipcRenderer.invoke("music:audio-host-result", payload || {});
   },
   openInNetEase(url) {
     return ipcRenderer.invoke("music:open-in-netease", { url });
@@ -70,8 +82,23 @@ contextBridge.exposeInMainWorld("deskpet", {
   getFmSong() {
     return ipcRenderer.invoke("music:get-fm-song");
   },
+  manipulatePlaylistTracks(payload) {
+    return ipcRenderer.invoke("music:playlist-tracks", payload || {});
+  },
+  likeSong(id, like = true) {
+    return ipcRenderer.invoke("music:like-song", { id, like });
+  },
+  getIntelligenceList(payload) {
+    return ipcRenderer.invoke("music:get-intelligence-list", payload || {});
+  },
+  trashFmSong(id) {
+    return ipcRenderer.invoke("music:fm-trash", { id });
+  },
   openMusicWindow() {
     return ipcRenderer.invoke("music:open-window");
+  },
+  controlMusic(action) {
+    return ipcRenderer.invoke("music:control", { action });
   },
   openExternal(url) {
     return ipcRenderer.invoke("shell:open-external", { url });

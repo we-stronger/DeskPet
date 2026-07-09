@@ -23,26 +23,39 @@ npm.cmd test
 npm.cmd run smoke
 ```
 
+Build a distributable Windows installer:
+
+```powershell
+npm.cmd run dist:win
+```
+
 PowerShell may block `npm.ps1` on some Windows machines. Use `npm.cmd` as shown above.
 
 ## Current Features
 
-- Transparent always-on-top desktop pet window.
+- Transparent always-on-top desktop pet window with a fixed 760x760 interaction canvas.
 - PNG sequence animations: idle, blink, tap, happy, sleep, walk, pout, and drag.
 - Left click tap feedback.
 - Rapid tap combo tracking; too many quick taps trigger pout feedback.
 - Drag the pet window without visual growth or scaling drift.
-- Right-click context menu for actions, Feed, Pet, Settings, reset, and quit.
+- Right-click context menu for actions, Feed, Pet, music, settings, reset, and quit.
 - Feed restores energy and increases affinity.
 - Pet improves mood and affinity.
 - Mood bubbles for interaction feedback: tap, happy, sleep, pout, feed, and pet.
 - Automatic behavior based on mood, affinity, energy, and idle time.
 - Automatic walking with screen-edge turn-around and left-facing mirror.
 - Sleep mode after long idle time or low energy; sleep recovers energy.
-- Settings panel for size, speed, opacity, automatic behavior, and automatic walking.
-- Settings panel also shows mood, energy, affinity, current action, and combo.
+- Focus timer with draggable compact focus indicator and persistent focus records.
+- Draggable date/time widget.
+- Built-in NetEase Cloud Music panel with search, playlists, private FM, QR login, and logout.
+- In-pet music playback with lyric fetching, lyric translation display, and queue-aware previous/next controls.
+- Draggable music status bar with play/pause, previous, next, music panel, account panel, and NetEase action buttons.
+- Music status bar appearance settings for lyric color, lyric size, and control button size.
+- AI chat window with locally stored ZhipuAI / GLM settings.
+- Settings panel for size, speed, opacity, focus durations, lyric style, and AI credentials.
+- Settings panel also shows mood, energy, affinity, current action, combo, streak, and focus status.
 - Tray menu for recovery actions if the pet is hidden or paused.
-- Persistent settings stored in `.runtime/user-data/deskpet-settings.json`.
+- Persistent settings stored in `.runtime/user-data/deskpet-settings.json` during development and in Electron user data when packaged.
 
 ## Project Structure
 
@@ -92,3 +105,14 @@ npm.cmd run smoke
 ```
 
 `npm.cmd run smoke` starts Electron in smoke-test mode and exits after the renderer loads. Windows may print Chromium `os_crypt` warnings; those are not app failures if the smoke log says `renderer loaded`.
+
+## Packaging
+
+Installer output is written to `release/`:
+
+```powershell
+npm.cmd run pack      # unpacked app for local inspection
+npm.cmd run dist:win  # NSIS installer
+```
+
+See `docs/BUILD.md` for packaging details and packaged data paths.

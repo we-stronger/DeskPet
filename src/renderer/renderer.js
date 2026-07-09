@@ -30,6 +30,7 @@
   const focusRemainingEl = document.querySelector("#focus-remaining");
   const statusStreak = document.querySelector("#status-streak");
   const focusIndicator = document.querySelector("#focus-indicator");
+  const musicStatusBar = document.querySelector("#music-status-bar");
   const focusDurationInput = document.querySelector("#focus-duration-input");
   const breakDurationInput = document.querySelector("#break-duration-input");
   const taskNameInput = document.querySelector("#task-name-input");
@@ -79,12 +80,16 @@
   // flicker). The drag end handler clears the flag and writes the
   // final position to clockPosition.
   let isDraggingClock = false;
-  const CLOCK_BOUNDS = Object.freeze({
-    minX: 0,
-    minY: 0,
-    maxX: 436,   // 512 − 76
-    maxY: 462,   // 512 − 50
-  });
+  let focusIndicatorPosition = null;
+  let musicStatusPosition = null;
+  let musicStatusPlaying = false;
+  let musicLyricStyle = { color: "#243044", fontSize: 12, controlSize: 31 };
+  let musicStatusState = { title: "网易云音乐", artist: "", status: "待命", lyric: "", translation: "" };
+  let audioStatusUnsubscribe = null;
+  const BASE_PET_VISUAL_SIZE = 512;
+  const MUSIC_STATUS_WIDTH = 400;
+  const MUSIC_STATUS_HEIGHT = 132;
+  const MUSIC_STATUS_DRAG_EXTRA_BOTTOM = 0;
   // The CSS positions the clock with left + transform: translateX(-50%)
   // so the auto-anchor's center-anchored output lines up. clockPosition
   // stores the visual top-left (matching what the drag helper reports
@@ -103,16 +108,85 @@
     return visualX + w / 2;
   }
   function clampClockPosition({ x, y }) {
+    return clampStageWidgetPosition({ x, y }, clockEl, 76, 50);
+  }
+  function clampStageWidgetPosition({ x, y }, element, fallbackWidth, fallbackHeight, { extraBottom = 0 } = {}) {
+    const rect = element ? element.getBoundingClientRect() : null;
+    const width = rect && rect.width > 0 ? rect.width : fallbackWidth;
+    const height = rect && rect.height > 0 ? rect.height : fallbackHeight;
+    const stageWidth = stage ? (stage.clientWidth || 512) : 512;
+    const stageHeight = stage ? (stage.clientHeight || 512) : 512;
     return {
-      x: Math.max(CLOCK_BOUNDS.minX, Math.min(CLOCK_BOUNDS.maxX, Math.round(x))),
-      y: Math.max(CLOCK_BOUNDS.minY, Math.min(CLOCK_BOUNDS.maxY, Math.round(y))),
+      x: Math.max(0, Math.min(stageWidth - width, Math.round(x))),
+      y: Math.max(0, Math.min(stageHeight - height + extraBottom, Math.round(y))),
     };
+  }
+  function clampMusicStatusPosition(position) {
+    return clampStageWidgetPosition(
+      position,
+      musicStatusBar,
+      MUSIC_STATUS_WIDTH,
+      MUSIC_STATUS_HEIGHT,
+      { extraBottom: MUSIC_STATUS_DRAG_EXTRA_BOTTOM },
+    );
+  }
+  function normalizeMusicLyricStyle(style = {}) {
+    const color = typeof style.color === "string" && /^#[0-9a-f]{6}$/i.test(style.color.trim())
+      ? style.color.trim()
+      : "#243044";
+    const rawSize = Number(style.fontSize);
+    const fontSize = Number.isFinite(rawSize) && rawSize >= 10 && rawSize <= 22
+      ? Math.round(rawSize)
+      : 12;
+    const rawControlSize = Number(style.controlSize);
+    const controlSize = Number.isFinite(rawControlSize) && rawControlSize >= 24 && rawControlSize <= 44
+      ? Math.round(rawControlSize)
+      : 31;
+    return { color, fontSize, controlSize };
+  }
+  function applyMusicLyricStyle(style) {
+    musicLyricStyle = normalizeMusicLyricStyle(style);
+    setMusicStatus(musicStatusState, { playing: musicStatusPlaying });
+  }
+  function visibleScaleForStage() {
+    const stageWidth = stage ? (stage.clientWidth || BASE_PET_VISUAL_SIZE) : BASE_PET_VISUAL_SIZE;
+    const stageHeight = stage ? (stage.clientHeight || BASE_PET_VISUAL_SIZE) : BASE_PET_VISUAL_SIZE;
+    const fit = Math.min(1, BASE_PET_VISUAL_SIZE / stageWidth, BASE_PET_VISUAL_SIZE / stageHeight);
+    return settings.visibleScaleForAction(sizePercent, animation.action) * fit;
   }
   function applyClockPosition() {
     if (!clockEl || !clockPosition) return;
     clockEl.style.left = `${visualToCssLeft(clockPosition.x)}px`;
     clockEl.style.top = `${clockPosition.y}px`;
     clockEl.style.right = "auto";
+  }
+  function applyFocusIndicatorPosition() {
+    if (!focusIndicator || !focusIndicatorPosition) return;
+    focusIndicator.style.left = `${focusIndicatorPosition.x}px`;
+    focusIndicator.style.top = `${focusIndicatorPosition.y}px`;
+    focusIndicator.style.right = "auto";
+    focusIndicator.style.bottom = "auto";
+  }
+  function clearFocusIndicatorPosition() {
+    if (!focusIndicator) return;
+    focusIndicator.style.left = "";
+    focusIndicator.style.top = "";
+    focusIndicator.style.right = "";
+    focusIndicator.style.bottom = "";
+  }
+  function applyMusicStatusPosition() {
+    if (!musicStatusBar || !musicStatusPosition) return;
+    musicStatusBar.style.left = `${musicStatusPosition.x}px`;
+    musicStatusBar.style.top = `${musicStatusPosition.y}px`;
+    musicStatusBar.style.right = "auto";
+    musicStatusBar.style.bottom = "auto";
+  }
+  function clearMusicStatusPosition() {
+    if (!musicStatusBar) return;
+    musicStatusBar.style.left = "";
+    musicStatusBar.style.top = "";
+    musicStatusBar.style.right = "";
+    musicStatusBar.style.bottom = "";
   }
   const animation = new window.AnimationController({
     actions,
@@ -135,6 +209,8 @@
   // process on every frame and let it call BrowserWindow.setShape().
   let lastShapeKey = null;
   let lastShapeFrameSrc = null;
+  const actionShapeCache = new Map();
+  const actionShapePending = new Map();
   function loadImageData(src) {
     return new Promise((resolve) => {
       const img = new Image();
@@ -163,6 +239,40 @@
     loader: loadImageData,
   });
 
+  function framePathForAction(action, frame) {
+    const frameName = String(frame).padStart(2, "0");
+    return `${animation.assetRoot}/${action}/${action}_${frameName}.png`;
+  }
+
+  function primeActionShape(action) {
+    if (!action || actionShapeCache.has(action) || actionShapePending.has(action)) return;
+    const config = actions[action];
+    if (!config || !Number.isFinite(config.frames) || config.frames <= 0) return;
+    const paths = Array.from({ length: config.frames }, (_, index) => framePathForAction(action, index + 1));
+    const pending = Promise.all(paths.map((src) => hitTester.load(src)))
+      .then((frames) => {
+        const validFrames = frames.filter((frame) => frame && frame.data && frame.width > 0);
+        const boxes = validFrames.map((frame) => window.DeskpetPetHitTest.computeOpaqueBoundingBox(frame));
+        const bbox = window.DeskpetPetShapeRects.unionBoundingBoxes(boxes);
+        if (bbox && validFrames[0]) {
+          actionShapeCache.set(action, {
+            bbox,
+            imageSize: {
+              width: validFrames[0].width,
+              height: validFrames[0].height || validFrames[0].width,
+            },
+          });
+          if (animation.action === action) {
+            requestAnimationFrame(refreshPetShape);
+          }
+        }
+      })
+      .finally(() => {
+        actionShapePending.delete(action);
+      });
+    actionShapePending.set(action, pending);
+  }
+
   function addVisibleUiShapeRect(rects, element) {
     if (!element || element.hidden) return;
     const style = window.getComputedStyle(element);
@@ -184,6 +294,7 @@
     addVisibleUiShapeRect(rects, moodBubble);
     addVisibleUiShapeRect(rects, clockEl);
     addVisibleUiShapeRect(rects, focusIndicator);
+    addVisibleUiShapeRect(rects, musicStatusBar);
     addVisibleUiShapeRect(rects, document.querySelector("#music-panel"));
     return rects;
   }
@@ -192,33 +303,21 @@
     if (!bridge || typeof bridge.setPetShape !== "function") return;
     const rects = visibleUiShapeRects();
     if (imageData && pet) {
-      const sourceRects = window.DeskpetPetHitTest.computeOpaqueRunRects(imageData, {
-        minRunWidth: 2,
-        maxRects: 900,
-      });
-      if (sourceRects.length) {
-        // The pet element is positioned inside the stage with the size set
-        // by applyPetVisualStyle. The image is rendered with object-fit:
-        // contain, so the visible sprite is centered with letterbox margins.
-        // Map each source-image run rect through the same contain math to
-        // get a tighter clickable shape than a single bounding box.
-        const petRect = pet.getBoundingClientRect();
-        const imgW = imageData.width;
-        const imgH = imageData.height || imgW;
-        const scale = Math.min(petRect.width / imgW, petRect.height / imgH);
-        const renderedW = imgW * scale;
-        const renderedH = imgH * scale;
-        const offsetX = (petRect.width - renderedW) / 2;
-        const offsetY = (petRect.height - renderedH) / 2;
-        const isMirrored = pet.classList.contains("is-facing-left");
-        rects.push(...sourceRects.map((sourceRect) => {
-          const rectLeft = isMirrored ? (imgW - sourceRect.x - sourceRect.width) : sourceRect.x;
-          return {
-            x: petRect.left + offsetX + rectLeft * scale,
-            y: petRect.top + offsetY + sourceRect.y * scale,
-            width: Math.max(1, sourceRect.width * scale),
-            height: Math.max(1, sourceRect.height * scale),
-          };
+      const petRect = pet.getBoundingClientRect();
+      const isMirrored = pet.classList.contains("is-facing-left");
+      const actionShape = actionShapeCache.get(animation.action);
+      if (actionShape) {
+        rects.push(...window.DeskpetPetShapeRects.mapBoundingBoxToPetRect({
+          bbox: actionShape.bbox,
+          imageSize: actionShape.imageSize,
+          petRect,
+          mirrored: isMirrored,
+        }));
+      } else {
+        rects.push(...window.DeskpetPetShapeRects.computePetShapeRects({
+          imageData,
+          petRect,
+          mirrored: isMirrored,
         }));
       }
     }
@@ -289,6 +388,142 @@
     if (clockIntervalId) return;
     updateClockWidget();
     clockIntervalId = setInterval(updateClockWidget, 30 * 1000);
+  }
+
+  function setMusicStatus(status, { playing = musicStatusPlaying } = {}) {
+    if (!musicStatusBar || !window.DeskpetMusicStatusView) return;
+    musicStatusPlaying = playing;
+    if (status && typeof status === "object") {
+      musicStatusState = { ...musicStatusState, ...status };
+    } else {
+      musicStatusState = {
+        ...musicStatusState,
+        status: status || "",
+        lyric: "",
+        translation: "",
+      };
+    }
+    musicStatusBar.innerHTML = window.DeskpetMusicStatusView.renderMusicStatusBar({
+      ...musicStatusState,
+      playing: musicStatusPlaying,
+      lyricStyle: musicLyricStyle,
+      playMode: window.DeskpetMusicPlaybackService?.getPlaybackState?.().mode || "sequence",
+    });
+    if (musicStatusPosition) applyMusicStatusPosition();
+    requestAnimationFrame(refreshPetShape);
+  }
+
+  function setMusicPlaybackStatus(text) {
+    setMusicStatus(text || "", { playing: musicStatusPlaying });
+  }
+
+  function audioStateStatus(state) {
+    const meta = state && state.meta ? state.meta : {};
+    const lyric = state && state.currentLyric;
+    return {
+      title: meta.title || "网易云音乐",
+      artist: meta.artist || "",
+      status: state && state.playing ? "正在播放" : "已暂停",
+      lyric: lyric && lyric.text ? lyric.text : "",
+      translation: lyric && lyric.translation ? lyric.translation : "",
+    };
+  }
+
+  function ensureAudioStatusSubscription() {
+    if (audioStatusUnsubscribe) return;
+    const audioPlayer = window.DeskpetAudioPlayer;
+    if (!audioPlayer || typeof audioPlayer.onStateChange !== "function") return;
+    audioStatusUnsubscribe = audioPlayer.onStateChange(async (state) => {
+      if (!state || !state.source) return;
+      if (state.ended && window.DeskpetMusicPlaybackService) {
+        const queueResult = await window.DeskpetMusicPlaybackService.playNext({
+          bridge,
+          audioPlayer: window.DeskpetAudioPlayer,
+          setStatus: setMusicPlaybackStatus,
+          logger: console,
+        }).catch(() => null);
+        if (queueResult && queueResult.success) {
+          setMusicStatus("下一首", { playing: true });
+          play("music");
+          return;
+        }
+      }
+      setMusicStatus(audioStateStatus(state), { playing: !!state.playing });
+    });
+  }
+
+  async function runMusicStatusAction(action) {
+    if (!bridge) return;
+    if (action === "openPanel" || action === "account") {
+      setMusicStatus("打开面板");
+      if (window.DeskpetMusicPanel && typeof window.DeskpetMusicPanel.open === "function") {
+        window.DeskpetMusicPanel.open("home");
+        setMusicStatus(action === "account" ? "账号面板已打开" : "面板已打开");
+        return;
+      }
+      const result = await bridge.openMusicWindow?.().catch(() => null);
+      setMusicStatus(result && result.success ? "面板已打开" : "面板打开失败");
+      return;
+    }
+    if (action === "openNetease") {
+      setMusicStatus("打开网易云");
+      const result = await bridge.openInNetEase?.("orpheus://").catch(() => null);
+      setMusicStatus(result && result.success ? "网易云已打开" : "打开失败");
+      return;
+    }
+    if (action === "cycleMode" && window.DeskpetMusicPlaybackService) {
+      const result = typeof window.DeskpetMusicPlaybackService.cyclePlaybackMode === "function"
+        ? window.DeskpetMusicPlaybackService.cyclePlaybackMode()
+        : { success: false };
+      const label = window.DeskpetMusicStatusView?.modeLabel?.(result && result.mode) || "顺序";
+      setMusicStatus(`播放模式：${label}`, { playing: musicStatusPlaying });
+      return;
+    }
+    const map = {
+      playPause: "播放/暂停",
+      previous: "上一首",
+      next: "下一首",
+    };
+    if (!map[action]) return;
+    if ((action === "previous" || action === "next") && window.DeskpetMusicPlaybackService) {
+      const queueResult = action === "next"
+        ? await window.DeskpetMusicPlaybackService.playNext({
+          bridge,
+          audioPlayer: window.DeskpetAudioPlayer,
+          setStatus: setMusicPlaybackStatus,
+          logger: console,
+        }).catch(() => null)
+        : await window.DeskpetMusicPlaybackService.playPrevious({
+          bridge,
+          audioPlayer: window.DeskpetAudioPlayer,
+          setStatus: setMusicPlaybackStatus,
+          logger: console,
+        }).catch(() => null);
+      if (queueResult && queueResult.success) {
+        setMusicStatus(action === "next" ? "下一首" : "上一首", { playing: true });
+        play("music");
+        return;
+      }
+    }
+    if (action === "playPause" && window.DeskpetAudioPlayer && typeof window.DeskpetAudioPlayer.togglePlayPause === "function") {
+      const state = typeof window.DeskpetAudioPlayer.getState === "function"
+        ? window.DeskpetAudioPlayer.getState()
+        : null;
+      if (state && state.source) {
+        const toggled = await window.DeskpetAudioPlayer.togglePlayPause().catch(() => null);
+        if (toggled && toggled.success) {
+          setMusicStatus(toggled.playing ? "正在播放" : "已暂停", { playing: toggled.playing });
+          return;
+        }
+      }
+    }
+    setMusicStatus(map[action], {
+      playing: action === "playPause" ? !musicStatusPlaying : musicStatusPlaying,
+    });
+    const result = await bridge.controlMusic?.(action).catch(() => null);
+    if (!result || !result.success) {
+      setMusicStatus("控制失败", { playing: musicStatusPlaying });
+    }
   }
 
   function clampFocusMinutes(value, fallback, min, max) {
@@ -596,11 +831,12 @@
     }
 
     pet.src = animation.currentFramePath();
+    primeActionShape(animation.action);
     pet.dataset.action = animation.action;
     visualStyle.applyPetVisualStyle(pet, {
       width: stage.clientWidth || 512,
       height: stage.clientHeight || 512,
-    }, settings.visibleScaleForAction(sizePercent, animation.action));
+    }, visibleScaleForStage());
     applyOpacity();
     applyWalkFacing();
     updateStatusPanel();
@@ -740,6 +976,54 @@
       return;
     }
 
+    if (command.startsWith("music:play-audio-url:")) {
+      const encoded = command.slice("music:play-audio-url:".length);
+      try {
+        const payload = JSON.parse(decodeURIComponent(encoded));
+        const reportAudioHostResult = (result) => {
+          if (!payload.requestId || typeof bridge.reportAudioHostResult !== "function") return;
+          bridge.reportAudioHostResult({
+            requestId: payload.requestId,
+            songId: payload.songId || "",
+            success: !!(result && result.success),
+            error: result && result.error,
+          }).catch(() => {});
+        };
+        if (payload && typeof payload.url === "string" && window.DeskpetAudioPlayer) {
+          ensureAudioStatusSubscription();
+          window.DeskpetAudioPlayer.playUrl(payload.url, {
+            songId: payload.songId || "",
+            title: payload.title || "",
+            artist: payload.artist || "",
+            lyric: payload.lyric || "",
+            tlyric: payload.tlyric || "",
+          }).then((result) => {
+            if (result && result.success) {
+              const title = payload.title || "网易云音乐";
+              const artist = payload.artist ? ` · ${payload.artist}` : "";
+              setMusicStatus(`${title}${artist}`, { playing: true });
+              play("music");
+              reportAudioHostResult({ success: true });
+            } else {
+              setMusicStatus("播放失败", { playing: false });
+              reportAudioHostResult({
+                success: false,
+                error: (result && result.error) || "audio-host-failed",
+              });
+            }
+          }).catch(() => {
+            setMusicStatus("播放失败", { playing: false });
+            reportAudioHostResult({ success: false, error: "audio-host-failed" });
+          });
+        } else {
+          reportAudioHostResult({ success: false, error: "audio-host-failed" });
+        }
+      } catch (_error) {
+        setMusicStatus("播放失败", { playing: false });
+      }
+      return;
+    }
+
     if (command.startsWith("size:")) {
       sizePercent = settings.normalizePercent(command.slice("size:".length));
       renderFrame();
@@ -809,6 +1093,21 @@
           ? clampClockPosition(loadedSettings.clockPosition)
           : null;
         if (clockPosition) applyClockPosition();
+        focusIndicatorPosition = (loadedSettings.focusIndicatorPosition
+          && Number.isFinite(loadedSettings.focusIndicatorPosition.x)
+          && Number.isFinite(loadedSettings.focusIndicatorPosition.y))
+          ? clampStageWidgetPosition(loadedSettings.focusIndicatorPosition, focusIndicator, 126, 34)
+          : null;
+        if (focusIndicatorPosition) applyFocusIndicatorPosition();
+        else clearFocusIndicatorPosition();
+        musicStatusPosition = (loadedSettings.musicStatusPosition
+          && Number.isFinite(loadedSettings.musicStatusPosition.x)
+          && Number.isFinite(loadedSettings.musicStatusPosition.y))
+          ? clampMusicStatusPosition(loadedSettings.musicStatusPosition)
+          : null;
+        if (musicStatusPosition) applyMusicStatusPosition();
+        else clearMusicStatusPosition();
+        applyMusicLyricStyle(loadedSettings.musicLyricStyle);
         if (window.DeskpetMusicPanel && typeof window.DeskpetMusicPanel.setPosition === "function") {
           window.DeskpetMusicPanel.setPosition(loadedSettings.musicPanelPosition || null);
         }
@@ -967,6 +1266,14 @@
         showMoodBubble("gift");
       }
       play(r.action);
+      return;
+    }
+
+    if (command === "music:listen") {
+      // Persistent listening animation: intro 1-6, then alternate 3-5
+      // forever (see action-config.js music.loopFrames). Stays until
+      // another action takes over, mirroring how `rest` works.
+      play("music");
       return;
     }
 
@@ -1200,6 +1507,18 @@
   settingsPanel?.addEventListener("contextmenu", (event) => {
     event.stopPropagation();
   });
+  musicStatusBar?.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+  });
+  musicStatusBar?.addEventListener("contextmenu", (event) => {
+    event.stopPropagation();
+  });
+  musicStatusBar?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-music-action]");
+    if (!button || !musicStatusBar.contains(button)) return;
+    event.preventDefault();
+    runMusicStatusAction(button.getAttribute("data-music-action"));
+  });
 
   sizeInput?.addEventListener("input", () => runCommand(`size:${sizeInput.value}`));
   speedInput?.addEventListener("input", () => runCommand(`speed:${speedInput.value}`));
@@ -1370,6 +1689,7 @@
     focusIndicator.className = `focus-indicator${isFocus ? " is-focus" : ""}${isBreak ? " is-break" : ""}${isPaused ? " is-paused" : ""}`;
     focusIndicator.innerHTML = `<span class="focus-indicator__icon">${icon}</span><span class="focus-indicator__label">${label}${isPaused ? "(\u5df2\u6682\u505c)" : ""}</span><span class="focus-indicator__time">${mm}:${ss}</span>`;
     focusIndicator.hidden = false;
+    if (focusIndicatorPosition) applyFocusIndicatorPosition();
     requestAnimationFrame(refreshPetShape);
   }
 
@@ -1421,7 +1741,50 @@
     });
   }
 
+  if (focusIndicator && window.DeskpetWidgetDrag && typeof window.DeskpetWidgetDrag.attachWidgetDrag === "function") {
+    window.DeskpetWidgetDrag.attachWidgetDrag(focusIndicator, {
+      threshold: 4,
+      onMove: ({ x, y }) => {
+        const clamped = clampStageWidgetPosition({ x, y }, focusIndicator, 126, 34);
+        focusIndicator.style.left = `${clamped.x}px`;
+        focusIndicator.style.top = `${clamped.y}px`;
+        focusIndicator.style.right = "auto";
+        focusIndicator.style.bottom = "auto";
+      },
+      onEnd: ({ x, y }) => {
+        const clamped = clampStageWidgetPosition({ x, y }, focusIndicator, 126, 34);
+        focusIndicatorPosition = clamped;
+        if (typeof bridge.updateSettings === "function") {
+          bridge.updateSettings({ focusIndicatorPosition: clamped }).catch(() => {});
+        }
+        refreshPetShape();
+      },
+    });
+  }
+
+  if (musicStatusBar && window.DeskpetWidgetDrag && typeof window.DeskpetWidgetDrag.attachWidgetDrag === "function") {
+    window.DeskpetWidgetDrag.attachWidgetDrag(musicStatusBar, {
+      threshold: 4,
+      onMove: ({ x, y }) => {
+        const clamped = clampMusicStatusPosition({ x, y });
+        musicStatusBar.style.left = `${clamped.x}px`;
+        musicStatusBar.style.top = `${clamped.y}px`;
+        musicStatusBar.style.right = "auto";
+        musicStatusBar.style.bottom = "auto";
+      },
+      onEnd: ({ x, y }) => {
+        const clamped = clampMusicStatusPosition({ x, y });
+        musicStatusPosition = clamped;
+        if (typeof bridge.updateSettings === "function") {
+          bridge.updateSettings({ musicStatusPosition: clamped }).catch(() => {});
+        }
+        refreshPetShape();
+      },
+    });
+  }
+
   syncSettingsPanel();
+  setMusicStatus("待命");
   renderFrame();
   scheduleFrames();
   scheduleBlink();

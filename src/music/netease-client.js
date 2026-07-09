@@ -1,5 +1,6 @@
 const https = require("node:https");
 const { URLSearchParams } = require("node:url");
+const { buildWeapiBody } = require("./netease-weapi");
 
 const API_BASE = "https://music.163.com";
 const REQUEST_TIMEOUT_MS = 8000;
@@ -28,17 +29,23 @@ function normalizeSong(raw, privilege) {
   };
 }
 
-function normalizePlaylist(raw) {
+function normalizePlaylist(raw, ownerUserId) {
   if (!raw || typeof raw !== "object") return null;
   const id = raw.id;
   const name = typeof raw.name === "string" ? raw.name.trim() : "";
   if ((typeof id !== "number" && typeof id !== "string") || !name) return null;
+  const creatorId = raw.creator && (raw.creator.userId ?? raw.creator.id);
+  const hasOwnerContext = ownerUserId !== undefined && ownerUserId !== null && ownerUserId !== "";
   return {
     id,
     name,
     trackCount: Number.isFinite(raw.trackCount) ? raw.trackCount : 0,
     coverImgUrl: typeof raw.coverImgUrl === "string" ? raw.coverImgUrl : "",
     creator: raw.creator && typeof raw.creator.nickname === "string" ? raw.creator.nickname : "",
+    creatorId,
+    editable: hasOwnerContext
+      ? String(creatorId) === String(ownerUserId) && raw.subscribed !== true
+      : undefined,
   };
 }
 
@@ -71,17 +78,29 @@ function normalizeProfile(raw) {
   return { userId, nickname, avatarUrl };
 }
 
-function cookieHeaders(cookie) {
+function withPcCookie(cookie) {
+  const value = typeof cookie === "string" ? cookie.trim() : "";
+  if (!value) return "os=pc";
+  return /(?:^|;\s*)os=/.test(value) ? value : `${value}; os=pc`;
+}
+
+function cookieHeaders(cookie, { appendPcCookie = true } = {}) {
   const headers = {
     "User-Agent": "Mozilla/5.0",
     Referer: "https://music.163.com/",
   };
-  if (cookie) headers.Cookie = cookie;
+  headers.Cookie = appendPcCookie ? withPcCookie(cookie) : String(cookie || "").trim();
   return headers;
 }
 
-function requestJson({ method = "GET", path, body = "", cookie, request = defaultRequest } = {}) {
-  return request({ method, path, body, headers: cookieHeaders(cookie), timeoutMs: REQUEST_TIMEOUT_MS });
+function requestJson({ method = "GET", path, body = "", cookie, appendPcCookie = true, request = defaultRequest } = {}) {
+  return request({
+    method,
+    path,
+    body,
+    headers: cookieHeaders(cookie, { appendPcCookie }),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+  });
 }
 
 function defaultRequest({ method, path, body, headers, timeoutMs }) {
@@ -182,7 +201,7 @@ async function getUserPlaylists(userId, { cookie, request, limit = 1000 } = {}) 
   try {
     const res = await requestJson({ path, cookie, request });
     const playlists = res.json && Array.isArray(res.json.playlist)
-      ? res.json.playlist.map(normalizePlaylist).filter(Boolean)
+      ? res.json.playlist.map((playlist) => normalizePlaylist(playlist, userId)).filter(Boolean)
       : null;
     if (!playlists) return { success: false, error: mapApiError(res.json, "getUserPlaylists"), playlists: [] };
     return { success: true, playlists };
@@ -303,6 +322,41 @@ async function getLyric(songId, { cookie, request } = {}) {
 
 // Personal FM (私人电台). Returns a single song at a time — the
 // caller re-invokes to get the next one.
+async function fetchSongUrl(songId, { cookie, request } = {}) {
+  if (songId === undefined || songId === null || songId === "") {
+    return { success: false, error: "empty-id" };
+  }
+  const body = new URLSearchParams({
+    ids: `[${String(songId)}]`,
+    br: "320000",
+  }).toString();
+  try {
+    const res = await requestJson({
+      method: "POST",
+      path: "/api/song/enhance/player/url",
+      body,
+      cookie,
+      request,
+    });
+    const entry = res.json && Array.isArray(res.json.data) ? res.json.data[0] : null;
+    if (entry && entry.code !== undefined && entry.code !== 200) {
+      return { success: false, error: `code-${entry.code}`, id: entry.id || songId };
+    }
+    if (!entry || typeof entry.url !== "string" || !entry.url) {
+      return { success: false, error: mapApiError(res.json, "fetchSongUrl"), id: entry && entry.id };
+    }
+    return {
+      success: true,
+      url: entry.url,
+      id: entry.id || songId,
+      br: entry.br || null,
+      type: entry.type || null,
+    };
+  } catch (error) {
+    return { success: false, error: (error && error.message) || "network-error" };
+  }
+}
+
 async function getFmSong({ cookie, request } = {}) {
   if (!cookie) return { success: false, error: "not-logged-in" };
   try {
@@ -314,6 +368,136 @@ async function getFmSong({ cookie, request } = {}) {
     const song = normalizeSong(list[0]);
     if (!song) return { success: false, error: mapApiError(res.json, "getFmSong") };
     return { success: true, song };
+  } catch (error) {
+    return { success: false, error: (error && error.message) || "network-error" };
+  }
+}
+
+async function manipulatePlaylistTracks({ op, playlistId, songIds, cookie, request } = {}) {
+  if (!cookie) return { success: false, error: "not-logged-in" };
+  const normalizedOp = op === "del" ? "del" : op === "add" ? "add" : "";
+  if (!normalizedOp) return { success: false, error: "empty-op" };
+  if (playlistId === undefined || playlistId === null || playlistId === "") {
+    return { success: false, error: "empty-playlist-id" };
+  }
+  const tracks = (Array.isArray(songIds) ? songIds : [songIds])
+    .filter((id) => id !== undefined && id !== null && id !== "")
+    .map((id) => String(id));
+  if (!tracks.length) return { success: false, error: "empty-id" };
+  const body = new URLSearchParams({
+    op: normalizedOp,
+    pid: String(playlistId),
+    trackIds: JSON.stringify(tracks),
+    imme: "true",
+  }).toString();
+  try {
+    const res = await requestJson({
+      method: "POST",
+      path: "/api/playlist/manipulate/tracks",
+      body,
+      cookie,
+      appendPcCookie: false,
+      request,
+    });
+    if (res.json && res.json.code === 200) {
+      return { success: true, op: normalizedOp, playlistId, songIds: tracks };
+    }
+    return { success: false, error: mapApiError(res.json, "manipulatePlaylistTracks") };
+  } catch (error) {
+    return { success: false, error: (error && error.message) || "network-error" };
+  }
+}
+
+async function likeSong(songId, like = true, { cookie, request } = {}) {
+  if (!cookie) return { success: false, error: "not-logged-in" };
+  if (songId === undefined || songId === null || songId === "") {
+    return { success: false, error: "empty-id" };
+  }
+  const body = buildWeapiBody({
+    alg: "itembased",
+    trackId: String(songId),
+    like: like !== false,
+    time: 3,
+    csrf_token: extractCsrf(cookie),
+  });
+  try {
+    const res = await requestJson({
+      method: "POST",
+      path: "/weapi/radio/like",
+      body,
+      cookie,
+      request,
+    });
+    if (res.json && res.json.code === 200) {
+      return { success: true, songId, like: like !== false };
+    }
+    return { success: false, error: mapApiError(res.json, "likeSong") };
+  } catch (error) {
+    return { success: false, error: (error && error.message) || "network-error" };
+  }
+}
+
+async function getIntelligenceList({ songId, playlistId, startSongId, count = 20, cookie, request } = {}) {
+  if (!cookie) return { success: false, error: "not-logged-in", songs: [] };
+  if (songId === undefined || songId === null || songId === "") {
+    return { success: false, error: "empty-id", songs: [] };
+  }
+  if (playlistId === undefined || playlistId === null || playlistId === "") {
+    return { success: false, error: "empty-playlist-id", songs: [] };
+  }
+  const body = new URLSearchParams({
+    songId: String(songId),
+    type: "fromPlayOne",
+    playlistId: String(playlistId),
+    startMusicId: String(startSongId || songId),
+    count: String(Number.isFinite(Number(count)) && Number(count) > 0 ? Math.round(Number(count)) : 20),
+  }).toString();
+  try {
+    const res = await requestJson({
+      method: "POST",
+      path: "/api/playmode/intelligence/list",
+      body,
+      cookie,
+      request,
+    });
+    const data = res.json && res.json.data;
+    const rawList = Array.isArray(data)
+      ? data
+      : (data && Array.isArray(data.list) ? data.list : null);
+    if (!rawList) {
+      return { success: false, error: mapApiError(res.json, "getIntelligenceList"), songs: [] };
+    }
+    const songs = rawList
+      .map((item) => normalizeSong((item && (item.songInfo || item.song)) || item))
+      .filter(Boolean);
+    return { success: true, songs };
+  } catch (error) {
+    return { success: false, error: (error && error.message) || "network-error", songs: [] };
+  }
+}
+
+async function trashFmSong(songId, { cookie, request, time = 25 } = {}) {
+  if (!cookie) return { success: false, error: "not-logged-in" };
+  if (songId === undefined || songId === null || songId === "") {
+    return { success: false, error: "empty-id" };
+  }
+  const body = new URLSearchParams({
+    songId: String(songId),
+    alg: "RT",
+    time: String(Number.isFinite(Number(time)) && Number(time) > 0 ? Math.round(Number(time)) : 25),
+  }).toString();
+  try {
+    const res = await requestJson({
+      method: "POST",
+      path: "/api/radio/trash/add",
+      body,
+      cookie,
+      request,
+    });
+    if (res.json && res.json.code === 200) {
+      return { success: true, songId };
+    }
+    return { success: false, error: mapApiError(res.json, "trashFmSong") };
   } catch (error) {
     return { success: false, error: (error && error.message) || "network-error" };
   }
@@ -334,5 +518,11 @@ module.exports = {
   getDailyRecommend,
   getTopCharts,
   getLyric,
+  fetchSongUrl,
   getFmSong,
+  manipulatePlaylistTracks,
+  likeSong,
+  getIntelligenceList,
+  trashFmSong,
+  withPcCookie,
 };

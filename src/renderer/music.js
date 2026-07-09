@@ -26,6 +26,7 @@
   const stack = [];
   let currentTab = "search";
   let fmBusy = false;
+  let pendingAddSongId = "";
 
   // --- DOM refs (looked up after DOMContentLoaded) ---
   let tabs = [];
@@ -75,6 +76,27 @@
 
   function escapeHtml(value) {
     return searchView.escapeHtml(value);
+  }
+
+  function artistFromSongRow(row) {
+    const text = row?.querySelector("span")?.textContent || "";
+    return text.split(/[·璺]/)[0].trim();
+  }
+
+  function queueFromCurrentSongList() {
+    if (!contentEl) return [];
+    const playlistId = currentPlaylistId();
+    return Array.from(contentEl.querySelectorAll(".music-panel-song[data-song-id]")).map((item) => ({
+      id: item.getAttribute("data-song-id") || "",
+      title: item.querySelector("strong")?.textContent?.trim() || "",
+      artist: artistFromSongRow(item),
+      playlistId,
+    })).filter((item) => item.id);
+  }
+
+  function currentPlaylistId() {
+    const top = stack[stack.length - 1];
+    return top && (top.name === "playlistDetail" || top.name === "chartDetail") ? String(top.id || "") : "";
   }
 
   // Parse LRC into [{ time: seconds, text }]. Lines without a timestamp
@@ -183,6 +205,32 @@
     };
   }
 
+  async function fetchAddToPlaylistChooser(songId) {
+    setStatus("正在加载歌单...", "info");
+    const result = await bridge.getUserPlaylists().catch(() => null);
+    if (!result || !result.success || !Array.isArray(result.playlists)) {
+      return {
+        html: '<div class="music-window__empty">歌单加载失败。</div>',
+        status: errorText(result && result.error),
+        statusTone: "error",
+      };
+    }
+    const rows = result.playlists
+      .filter((playlist) => playlist.editable !== false)
+      .map((playlist) => `
+        <button type="button" class="music-panel-add-target" data-playlist-id="${escapeHtml(playlist.id)}">
+          <strong>${escapeHtml(playlist.name || "未命名歌单")}</strong>
+          <span>${escapeHtml(playlist.trackCount || 0)} 首</span>
+        </button>`).join("");
+    return {
+      html: `<div class="music-panel-add-chooser" data-song-id="${escapeHtml(songId)}">
+        ${rows || '<div class="music-window__empty">没有可用歌单。</div>'}
+      </div>`,
+      status: "选择要加入的歌单。",
+      statusTone: "info",
+    };
+  }
+
   async function fetchPlaylistDetail(playlistId) {
     setStatus("正在获取歌单歌曲...", "info");
     const result = await bridge.getPlaylistDetail(playlistId).catch(() => null);
@@ -272,9 +320,10 @@
           <div class="music-window__fm-card__title">${escapeHtml(result.song.name)}</div>
           <div class="music-window__fm-card__meta">${escapeHtml((result.song.artists || []).join(" / ") || "未知艺人")} · ${escapeHtml(result.song.album || "")}</div>
           <div class="music-window__fm-card__actions">
-            <button type="button" id="music-window-fm-open" class="music-window__primary-btn" data-song-id="${escapeHtml(result.song.id)}">打开这首歌</button>
+            <button type="button" id="music-window-fm-open" class="music-window__primary-btn" data-song-id="${escapeHtml(result.song.id)}">播放这首歌</button>
             <button type="button" id="music-window-fm-next" class="music-window__primary-btn">下一首</button>
             <button type="button" id="music-window-fm-lyrics" class="music-window__primary-btn" data-song-id="${escapeHtml(result.song.id)}">看歌词</button>
+            <button type="button" id="music-window-fm-trash" class="music-window__primary-btn" data-song-id="${escapeHtml(result.song.id)}">不感兴趣</button>
           </div>
         </div>`,
         status: "私人 FM · 一首接一首。",
@@ -317,6 +366,7 @@
     switch (top.name) {
       case "search":           view = await fetchSearch(top.keyword || ""); break;
       case "playlists":        view = await fetchPlaylists(); break;
+      case "addToPlaylist":    view = await fetchAddToPlaylistChooser(top.songId); break;
       case "playlistDetail":   view = await fetchPlaylistDetail(top.id); break;
       case "daily":            view = await fetchDaily(); break;
       case "charts":           view = await fetchCharts(); break;
@@ -367,7 +417,17 @@
     const backBtn = target.closest(".music-panel-back-btn");
     if (backBtn) { popView(); return; }
     const openSong = target.closest(".music-panel-open-song");
-    if (openSong) { openSongInNetEase(openSong.getAttribute("data-song-id")); return; }
+    if (openSong) { openSongInNetEase(openSong.getAttribute("data-song-id"), openSong.closest(".music-panel-song")); return; }
+    const likeSong = target.closest(".music-panel-like-song");
+    if (likeSong) { likeCurrentSong(likeSong.getAttribute("data-song-id")); return; }
+    const addSong = target.closest(".music-panel-add-song");
+    if (addSong) { showAddToPlaylistChooser(addSong.getAttribute("data-song-id")); return; }
+    const addTarget = target.closest(".music-panel-add-target");
+    if (addTarget) { addCurrentSongToPlaylist(addTarget.getAttribute("data-playlist-id")); return; }
+    const removeSong = target.closest(".music-panel-remove-song");
+    if (removeSong) { removeCurrentSongFromPlaylist(removeSong.getAttribute("data-song-id"), removeSong.closest(".music-panel-song")); return; }
+    const playMode = target.closest(".music-panel-play-mode");
+    if (playMode) { playVisibleQueue(playMode.getAttribute("data-play-mode")); return; }
     const openPlaylist = target.closest(".music-panel-open-playlist");
     if (openPlaylist) {
       pushView({
@@ -405,22 +465,130 @@
       return;
     }
     const fmOpen = target.closest("#music-window-fm-open");
-    if (fmOpen) { openSongInNetEase(fmOpen.getAttribute("data-song-id")); return; }
+    if (fmOpen) { openSongInNetEase(fmOpen.getAttribute("data-song-id"), fmOpen.closest(".music-window__fm-card")); return; }
     const fmNext = target.closest("#music-window-fm-next");
     if (fmNext) { renderTop(); return; }
     const fmLyrics = target.closest("#music-window-fm-lyrics");
     if (fmLyrics) { showLyrics(fmLyrics.getAttribute("data-song-id"), null); return; }
+    const fmTrash = target.closest("#music-window-fm-trash");
+    if (fmTrash) { trashFmSong(fmTrash.getAttribute("data-song-id")); return; }
   }
 
-  async function openSongInNetEase(id) {
+  async function likeCurrentSong(id) {
+    if (!id || typeof bridge.likeSong !== "function") return;
+    const result = await bridge.likeSong(id, true).catch(() => null);
+    setStatus(result && result.success ? "已加入我喜欢。" : errorText(result && result.error), result && result.success ? "ok" : "error");
+  }
+
+  function showAddToPlaylistChooser(id) {
     if (!id) return;
-    const result = typeof bridge.openMusicSong === "function"
-      ? await bridge.openMusicSong(id).catch(() => null)
-      : null;
+    pendingAddSongId = String(id);
+    pushView({
+      tab: currentTab,
+      name: "addToPlaylist",
+      songId: pendingAddSongId,
+      navTitle: "添加到歌单",
+    });
+  }
+
+  async function addCurrentSongToPlaylist(playlistId) {
+    if (!pendingAddSongId || !playlistId || typeof bridge.manipulatePlaylistTracks !== "function") return;
+    setStatus("正在加入歌单...", "info");
+    const result = await bridge.manipulatePlaylistTracks({
+      op: "add",
+      playlistId,
+      songIds: [pendingAddSongId],
+    }).catch(() => null);
     if (result && result.success) {
-      setStatus("帮你打开这首歌。", "ok");
+      pendingAddSongId = "";
+      stack.pop();
+      await renderTop();
+      setStatus("已加入歌单。", "ok");
+      return;
+    }
+    setStatus(errorText(result && result.error), "error");
+  }
+
+  async function removeCurrentSongFromPlaylist(id, row) {
+    const playlistId = currentPlaylistId();
+    if (!id || !playlistId || typeof bridge.manipulatePlaylistTracks !== "function") {
+      setStatus("请先打开某个歌单后再删除歌曲。", "info");
+      return;
+    }
+    const result = await bridge.manipulatePlaylistTracks({ op: "del", playlistId, songIds: [id] }).catch(() => null);
+    if (result && result.success) {
+      row?.remove();
+      setStatus("已从歌单删除。", "ok");
+    } else {
+      setStatus(errorText(result && result.error), "error");
+    }
+  }
+
+  async function trashFmSong(id) {
+    if (!id || typeof bridge.trashFmSong !== "function") return;
+    const result = await bridge.trashFmSong(id).catch(() => null);
+    setStatus(result && result.success ? "已减少类似推荐，正在换一首。" : errorText(result && result.error), result && result.success ? "ok" : "error");
+    if (result && result.success) renderTop();
+  }
+
+  function songMetaFromElement(element) {
+    if (!element) return {};
+    const title = element.querySelector("strong, .music-window__fm-card__title")?.textContent?.trim() || "";
+    const metaText = element.querySelector("span, .music-window__fm-card__meta")?.textContent || "";
+    const artist = metaText.split("路")[0].split("·")[0].trim();
+    return { title, artist };
+  }
+
+  async function openSongInNetEase(id, sourceElement = null) {
+    if (!id) return;
+    const result = await root.DeskpetMusicPlaybackService.playSongWithFallback(id, {
+      bridge,
+      audioPlayer: root.DeskpetAudioPlayer,
+      queue: queueFromCurrentSongList(),
+      playlistId: currentPlaylistId(),
+      meta: songMetaFromElement(sourceElement),
+      setStatus,
+      logger: root.console,
+    });
+    if (result && result.success) {
+      const isAudioPlayback = result.method === "audio" || result.method === "audio-host" || result.method === "web-player";
+      const visibleWebFallback = result.method === "web-player-visible";
+      const meta = songMetaFromElement(sourceElement);
+      const displayName = meta.title ? `：${meta.title}${meta.artist ? ` · ${meta.artist}` : ""}` : "这首歌";
+      const message = visibleWebFallback
+        ? `已打开网易云网页播放器，请在窗口内确认播放${displayName}`
+        : (isAudioPlayback ? `正在播放${displayName}` : `帮你打开${displayName}`);
+      setStatus(message, visibleWebFallback ? "info" : "ok");
     } else {
       setStatus(errorText((result && result.error) || "open-failed", "打开网易云失败。"), "error");
+    }
+  }
+
+  async function playVisibleQueue(mode = "sequence") {
+    const queue = queueFromCurrentSongList();
+    if (!queue.length || !root.DeskpetMusicPlaybackService) {
+      setStatus("当前列表没有可播放歌曲。", "empty");
+      return;
+    }
+    const normalizedMode = mode === "shuffle" || mode === "heartbeat" || mode === "repeat-one" ? mode : "sequence";
+    const first = normalizedMode === "sequence"
+      ? queue[0]
+      : queue[Math.floor(Math.random() * queue.length)] || queue[0];
+    const result = await root.DeskpetMusicPlaybackService.playSongWithFallback(first.id, {
+      bridge,
+      audioPlayer: root.DeskpetAudioPlayer,
+      queue: queueFromCurrentSongList(),
+      mode: normalizedMode,
+      playlistId: currentPlaylistId(),
+      meta: { title: first.title, artist: first.artist },
+      setStatus,
+      logger: root.console,
+    });
+    if (result && result.success) {
+      const label = normalizedMode === "shuffle" ? "随机播放" : (normalizedMode === "heartbeat" ? "心动模式" : "顺序播放");
+      setStatus(`${label}已开始。`, "ok");
+    } else {
+      setStatus(errorText((result && result.error) || "open-failed", "播放失败。"), "error");
     }
   }
 

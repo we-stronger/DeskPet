@@ -30,9 +30,13 @@ const api = {
   updateSettings: noop,
 
   searchMusic: () => Promise.resolve({ success: true, songs: SAMPLE_SONGS }),
-  fetchSongUrl: noop,
+  fetchSongUrl: (id) => Promise.resolve({ success: true, id, url: "https://example.com/test.mp3" }),
+  playAudioUrlInPet: ({ songId }) => {
+    openExternalCalls.push("audio-host:" + String(songId));
+    return Promise.resolve({ success: true, method: "audio-host" });
+  },
   openMusicSong: (id) => { openExternalCalls.push("song:" + String(id)); return Promise.resolve({ success: true, method: "web" }); },
-  playSong: noop,
+  playSong: (id) => { openExternalCalls.push("play:" + String(id)); return Promise.resolve({ success: true, method: "running-instance" }); },
   openInNetEase: noop,
   openSearchInNetEase: noop,
   getMusicSessionStatus: () => Promise.resolve({ success: true, loggedIn }),
@@ -48,7 +52,7 @@ const api = {
   logoutMusic: () => { loggedIn = false; return Promise.resolve({ success: true }); },
 
   createNeteaseQrKey: () => Promise.resolve({ success: true, key: "fake-key" }),
-  createNeteaseQrImage: () => Promise.resolve({ success: true, qr: fakeQrImg }),
+  createNeteaseQrImage: () => Promise.resolve({ success: true, qrUrl: fakeQrImg }),
   checkNeteaseQr: () => {
     qrCheckCount += 1;
     if (qrCheckCount < 2) return Promise.resolve({ success: true, status: "waiting-for-scan" });

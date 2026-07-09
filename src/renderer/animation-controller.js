@@ -9,6 +9,11 @@
       this.assetRoot = assetRoot.replace(/[\\/]$/, "");
       this.action = initialAction;
       this.frame = 1;
+      // -1 = playing intro frames (1..frames). >=0 = cycling through
+      // loopFrames[index], used by actions that want to play the intro
+      // once and then alternate a subset of frames forever (e.g. music:
+      // play 1..6 once, then alternate 3 and 5).
+      this.loopFrameIndex = -1;
       this.speedMultiplier = 1;
     }
 
@@ -18,6 +23,7 @@
       }
       this.action = action;
       this.frame = 1;
+      this.loopFrameIndex = -1;
     }
 
     requestBlink() {
@@ -31,8 +37,24 @@
     advance() {
       const config = this.actions[this.action];
 
+      // Mode 1: cycling through the loopFrames array (post-intro loop)
+      if (this.loopFrameIndex >= 0) {
+        this.loopFrameIndex = (this.loopFrameIndex + 1) % config.loopFrames.length;
+        this.frame = config.loopFrames[this.loopFrameIndex];
+        return;
+      }
+
+      // Mode 2: playing intro frames 1..frames
       if (this.frame < config.frames) {
         this.frame += 1;
+        return;
+      }
+
+      // Just finished frame N. Decide what's next.
+      if (config.loop && Array.isArray(config.loopFrames) && config.loopFrames.length > 0) {
+        // Start cycling through loopFrames starting from index 0.
+        this.loopFrameIndex = 0;
+        this.frame = config.loopFrames[0];
         return;
       }
 

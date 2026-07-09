@@ -1,4 +1,4 @@
-const PET_WINDOW_SIZE = Object.freeze({ width: 512, height: 512 });
+const PET_WINDOW_SIZE = Object.freeze({ width: 760, height: 760 });
 
 function shouldRestorePetWindowSize(size) {
   return size[0] !== PET_WINDOW_SIZE.width || size[1] !== PET_WINDOW_SIZE.height;

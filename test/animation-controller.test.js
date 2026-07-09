@@ -69,3 +69,71 @@ test("applies a global speed multiplier to current fps", () => {
   assert.equal(controller.currentFps(), 11.2);
 });
 
+test("plays intro frames once then cycles through loopFrames forever", () => {
+  const musicActions = {
+    music: { frames: 6, fps: 6, loop: true, loopFrames: [3, 5] },
+    idle: { frames: 1, fps: 1, loop: true },
+  };
+  const controller = new AnimationController({ actions: musicActions, assetRoot: "../../frames" });
+  controller.start("music");
+
+  const seen = [];
+  // Capture enough frames to play the 6-frame intro + many loop iterations.
+  for (let i = 0; i < 16; i += 1) {
+    seen.push(controller.frame);
+    controller.advance();
+  }
+
+  // Intro: 1, 2, 3, 4, 5, 6 (currentFrame starts at 1; advance takes it to 2 first)
+  assert.deepEqual(seen.slice(0, 6), [1, 2, 3, 4, 5, 6]);
+  // After frame 6, switch to cycling loopFrames: 3, 5, 3, 5, ...
+  assert.deepEqual(seen.slice(6, 16), [3, 5, 3, 5, 3, 5, 3, 5, 3, 5]);
+  assert.equal(controller.action, "music", "music action stays current (no .next fallback)");
+});
+
+test("restarting an action with loopFrames resets to intro mode", () => {
+  const musicActions = {
+    music: { frames: 6, fps: 6, loop: true, loopFrames: [3, 5] },
+    idle: { frames: 1, fps: 1, loop: true },
+  };
+  const controller = new AnimationController({ actions: musicActions, assetRoot: "../../frames" });
+  controller.start("music");
+  // Advance past the intro into loopFrames mode.
+  for (let i = 0; i < 7; i += 1) controller.advance();
+  assert.equal(controller.frame, 5, "should be in loopFrames mode by now");
+  // Re-starting music resets to frame 1 and intro mode.
+  controller.start("music");
+  assert.equal(controller.frame, 1);
+  // First advance should go to frame 2 (intro), not skip to loopFrames.
+  controller.advance();
+  assert.equal(controller.frame, 2);
+});
+
+test("actions without loopFrames still loop the standard 1..N pattern", () => {
+  const controller = new AnimationController({ actions, assetRoot: "../../frames" });
+  controller.start("drag");
+  const seen = [];
+  for (let i = 0; i < 10; i += 1) {
+    seen.push(controller.frame);
+    controller.advance();
+  }
+  // drag has frames:4, loop:true. Pattern: 1,2,3,4,1,2,3,4,1,2.
+  assert.deepEqual(seen, [1, 2, 3, 4, 1, 2, 3, 4, 1, 2]);
+});
+
+test("ignores an empty loopFrames array and falls back to standard 1..N loop", () => {
+  const fallbackActions = {
+    odd: { frames: 3, fps: 6, loop: true, loopFrames: [] },
+    idle: { frames: 1, fps: 1, loop: true },
+  };
+  const controller = new AnimationController({ actions: fallbackActions, assetRoot: "../../frames" });
+  controller.start("odd");
+  const seen = [];
+  for (let i = 0; i < 8; i += 1) {
+    seen.push(controller.frame);
+    controller.advance();
+  }
+  // Empty loopFrames → standard loop: 1,2,3,1,2,3,1,2.
+  assert.deepEqual(seen, [1, 2, 3, 1, 2, 3, 1, 2]);
+});
+

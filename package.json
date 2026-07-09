@@ -2,18 +2,71 @@
   "name": "desk-play-pet",
   "version": "0.1.0",
   "private": true,
-  "description": "Transparent desktop pet MVP using generated PNG animation frames.",
+  "description": "Transparent desktop pet MVP with music panel, focus timer, and AI chat.",
   "main": "src/main.js",
+  "author": {
+    "name": "DeskPet"
+  },
   "dependencies": {
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "qrcode": "^1.5.4"
   },
   "scripts": {
     "start": "node scripts/start-electron.js",
     "smoke": "node scripts/start-electron.js --smoke-test",
-    "test": "node --test",
-    "e2e:music": "electron scripts/e2e-music-panel.js"
+    "test": "node --test test/*.test.js",
+    "e2e:music": "electron scripts/e2e-music-panel.js",
+    "e2e:music-listen": "electron scripts/e2e-music-listen.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win"
   },
   "devDependencies": {
-    "electron": "^37.4.0"
+    "electron": "^37.4.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.deskpet.app",
+    "productName": "DeskPet",
+    "copyright": "Copyright © 2026 DeskPet",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "frames/**/*",
+      "package.json",
+      "!**/*.map",
+      "!**/__pycache__/**",
+      "!**/*.test.js"
+    ],
+    "extraResources": [
+      {
+        "from": "photo.png",
+        "to": "photo.png"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DeskPet",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "DeskPet-Setup-${version}.${ext}"
+    }
   }
 }

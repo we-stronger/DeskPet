@@ -115,6 +115,7 @@ function interactionSubmenu({ sleeping, sendCommand }) {
       ? { label: "☀ 叫醒", click: () => sendCommand("wake") }
       : { label: "🌙 休息", click: () => sendCommand("rest") },
     { label: "🚶 走走", click: () => sendCommand("walk") },
+    { label: "🎧 听音乐", click: () => sendCommand("music:listen") },
     { type: "separator" },
     { label: "🍪 喂食", click: () => sendCommand("feed") },
     { label: "✋ 摸摸头", click: () => sendCommand("pet") },
@@ -154,10 +155,9 @@ function musicSubmenu({ sendCommand }) {
     { label: "⏭ 下一首", click: () => sendCommand("music:next") },
     { label: "⏮ 上一首", click: () => sendCommand("music:previous") },
     { type: "separator" },
-    { label: "🎚 打开网易云音乐面板", click: () => sendCommand("music:open-panel") },
+    { label: "🎚 打开网易云音乐面板", click: () => sendCommand("music:open-window") },
     { label: "🔍 搜索音乐…", click: () => sendCommand("music:open-search") },
     { label: "📚 我的歌单", click: () => sendCommand("music:open-playlists") },
-    { label: "☁ 打开网易云音乐", click: () => sendCommand("music:open-netease") },
   ];
 }
 

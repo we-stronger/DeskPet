@@ -141,6 +141,27 @@ test("createQrKey surfaces network errors when both endpoints fail", async () =>
   assert.equal(result.error, "no-key");
 });
 
+test("createQrImage returns a local PNG data URL", async () => {
+  const calls = [];
+  const result = await auth.createQrImage("abc-123", {
+    toDataURL: async (text, options) => {
+      calls.push({ text, options });
+      return "data:image/png;base64,AAAA";
+    },
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.qrUrl, "data:image/png;base64,AAAA");
+  assert.equal(calls[0].text, "https://music.163.com/login?codekey=abc-123");
+  assert.equal(calls[0].options.width, 240);
+});
+
+test("createQrImage rejects an empty key", async () => {
+  const result = await auth.createQrImage("");
+  assert.equal(result.success, false);
+  assert.equal(result.error, "empty-key");
+});
+
 // -- checkQrStatus tests --
 
 test("checkQrStatus maps status code 801 to waiting-for-scan", async () => {
@@ -248,11 +269,11 @@ test("mapStatusCode handles numeric and string inputs", () => {
   assert.equal(auth.mapStatusCode("garbage"), null);
 });
 
-test("collectCookie prefers the JSON body cookie when present", () => {
-  const headers = { "set-cookie": ["FROM_HEADER=v"] };
+test("collectCookie merges JSON body and Set-Cookie values", () => {
+  const headers = { "set-cookie": ["__csrf=token; Path=/", "NMTID=device; Path=/"] };
   assert.equal(
-    auth.collectCookie(headers, { cookie: "FROM_BODY=x" }),
-    "FROM_BODY=x",
+    auth.collectCookie(headers, { cookie: "MUSIC_U=session" }),
+    "MUSIC_U=session; __csrf=token; NMTID=device",
   );
 });
 

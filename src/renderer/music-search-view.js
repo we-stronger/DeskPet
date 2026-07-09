@@ -16,6 +16,15 @@
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
   }
 
+  function renderSongActions(id) {
+    return `<div class="music-panel-song__actions">
+        <button type="button" class="music-panel-like-song" data-song-id="${id}" title="喜欢">♡</button>
+        <button type="button" class="music-panel-add-song" data-song-id="${id}" title="加入歌单">＋</button>
+        <button type="button" class="music-panel-remove-song" data-song-id="${id}" title="从歌单删除">－</button>
+        <button type="button" class="music-panel-open-song" data-song-id="${id}">播放</button>
+      </div>`;
+  }
+
   function renderSongList(songs, { emptyText = "没有找到结果。" } = {}) {
     if (!Array.isArray(songs) || songs.length === 0) {
       return `<div class="music-panel-empty">${escapeHtml(emptyText)}</div>`;
@@ -32,7 +41,7 @@
           <strong>${title}</strong>
           <span>${artists} · ${album} · ${duration} · ${playable}</span>
         </div>
-        <button type="button" class="music-panel-open-song" data-song-id="${id}">打开</button>
+        ${renderSongActions(id)}
       </li>`;
     }).join("")}</ul>`;
   }

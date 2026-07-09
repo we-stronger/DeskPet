@@ -45,7 +45,8 @@
         spawn: "已通过网易云客户端打开歌曲。",
         "bare-exe": "已打开网易云客户端，请在客户端内确认歌曲。",
         web: "已在浏览器中打开网易云歌曲页。",
-        direct: "已在浏览器中打开歌曲直链。",
+        audio: "正在桌宠后台播放歌曲。",
+        direct: "正在桌宠后台播放歌曲。",
       };
       return methodLabels[result.method] || "已交给网易云处理。";
     }
@@ -142,6 +143,28 @@
     });
   }
 
+  async function openOriginalSongFallback(songId, previousError) {
+    if (typeof bridge.openMusicSong !== "function") {
+      return { success: false, error: previousError || "open-song-unavailable", songId };
+    }
+    if (root.console && typeof root.console.warn === "function") {
+      root.console.warn("[music-search] using browser fallback", JSON.stringify({
+        songId: String(songId),
+        previousError: previousError || null,
+      }));
+    }
+    setStatus("正在使用浏览器保底打开网易云...", "info");
+    const opened = await bridge.openMusicSong(songId).catch(() => null);
+    if (opened && opened.success) {
+      return { ...opened, songId, fallback: "browser-open" };
+    }
+    return {
+      success: false,
+      error: (opened && opened.error) || previousError || "open-failed",
+      songId,
+    };
+  }
+
   async function openSearchInNetEaseOrWeb(query) {
     if (typeof query !== "string" || !query.trim()) return;
     const trimmed = query.trim();
@@ -221,30 +244,23 @@
       result = typeof bridge.playSong === "function"
         ? await bridge.playSong(songId)
         : { success: false, error: "bridge-unavailable" };
-      // If the main process failed to hand off the song to a native client,
-      // attempt to fetch a direct audio URL and open it in the browser
-      // as a fallback so the user still gets playback.
-      if (!(result && result.success)) {
-        try {
-          const urlResult = typeof bridge.fetchSongUrl === "function"
-            ? await bridge.fetchSongUrl(songId)
-            : null;
-          if (urlResult && urlResult.success && urlResult.url && typeof bridge.openExternal === "function") {
-            await bridge.openExternal(urlResult.url).catch(() => {});
-            result = { success: true, method: "direct", songId };
+      if (!(result && result.success) || result.method === "spawn") {
+        if (typeof bridge.fetchSongUrl === "function") {
+          setStatus("正在后台播放...", "info");
+          const urlResult = await bridge.fetchSongUrl(songId).catch(() => null);
+          const player = root.DeskpetAudioPlayer;
+          if (urlResult && urlResult.success && urlResult.url && player && typeof player.playUrl === "function") {
+            const audioResult = await player.playUrl(urlResult.url);
+            if (audioResult && audioResult.success) {
+              result = { ...audioResult, method: "audio", songId };
+            } else {
+              result = await openOriginalSongFallback(songId, (audioResult && audioResult.error) || "audio-play-failed");
+            }
+          } else {
+            result = await openOriginalSongFallback(songId, (urlResult && urlResult.error) || "no-audio-url");
           }
-        } catch (_err) {
-          // ignore fallback errors and keep the original result
-        }
-      }
-      if (!(result && result.success) && typeof bridge.fetchSongUrl === "function") {
-        setStatus("正在尝试歌曲直链...", "info");
-        const urlResult = await bridge.fetchSongUrl(songId).catch(() => null);
-        if (urlResult && urlResult.success && urlResult.url && typeof bridge.openExternal === "function") {
-          const opened = await bridge.openExternal(urlResult.url).catch(() => null);
-          if (opened && opened.success) {
-            result = { success: true, method: "direct", songId };
-          }
+        } else {
+          result = await openOriginalSongFallback(songId, "fetch-url-unavailable");
         }
       }
     } catch (error) {
@@ -291,4 +307,3 @@
 
   if (input) input.focus();
 })(typeof window !== "undefined" ? window : globalThis);
-

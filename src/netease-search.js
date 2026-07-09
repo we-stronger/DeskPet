@@ -12,6 +12,8 @@ const REQUEST_TIMEOUT_MS = 5000;
 // the bare `orpheus://` simply opens the app and lets the user navigate.
 // We try the most common variants first, then less common ones.
 const ORPHEUS_PLAY_TARGETS = [
+  (id) => `orpheus://nm/song?id=${encodeURIComponent(id)}&type=song`,
+  (id) => `orpheus://nm/song?id=${encodeURIComponent(id)}`,
   (id) => `orpheus://song?id=${encodeURIComponent(id)}`,
   (id) => `orpheus://play?songid=${encodeURIComponent(id)}`,
   (id) => `orpheus://play?id=${encodeURIComponent(id)}`,
@@ -47,11 +49,11 @@ function buildSearchOrpheusTargets(query) {
   return ORPHEUS_SEARCH_TARGETS.map((make) => make(query));
 }
 
-// Wrap a list of orpheus targets into a command-line argv that
-// cloudmusic.exe accepts: pass the first orpheus URL as the first
-// positional argument so NetEase receives it via its own URL dispatcher.
+// Wrap an orpheus target into the command-line argv registered by NetEase.
+// The local protocol handler is `cloudmusic.exe --webcmd="%1"`; passing the
+// raw URL as argv[0] starts the process but does not reliably route the song.
 function buildCloudMusicArgv(url) {
-  return [url];
+  return [`--webcmd=${url}`];
 }
 
 function normalizeSong(raw) {

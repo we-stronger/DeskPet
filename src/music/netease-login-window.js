@@ -39,6 +39,16 @@ function cookieString(list) {
     .join("; ");
 }
 
+function sessionCookieString(list) {
+  if (!Array.isArray(list) || !list.some(isAuthCookie)) return "";
+  const values = new Map();
+  for (const cookie of list) {
+    if (!cookie || !cookie.name || typeof cookie.value !== "string" || !cookie.value) continue;
+    values.set(cookie.name, cookie.value);
+  }
+  return Array.from(values, ([name, value]) => `${name}=${value}`).join("; ");
+}
+
 function startLoginWindow({
   url,
   pollIntervalMs = 1500,
@@ -128,7 +138,7 @@ function startLoginWindow({
       const all = await sess.cookies.get({ domain: ".music.163.com" });
       const auth = all.filter(isAuthCookie);
       if (auth.length > 0) {
-        const cookieStr = cookieString(auth);
+        const cookieStr = sessionCookieString(all);
         if (cookieStr) {
           onSuccess(cookieStr);
           resolveWith("success");
@@ -161,5 +171,6 @@ module.exports = {
   startLoginWindow,
   isAuthCookie,
   cookieString,
+  sessionCookieString,
   AUTH_COOKIE_NAMES,
 };

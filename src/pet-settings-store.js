@@ -39,6 +39,28 @@ const defaultPetSettings = Object.freeze({
   // renderer skips the auto-anchor placement and pins the clock at
   // this position instead. null = auto-anchor as before.
   clockPosition: null,
+  // User-saved top-left position of the compact focus indicator.
+  // null = bottom-right default.
+  focusIndicatorPosition: null,
+  // User-saved top-left position of the compact music status bar.
+  // null = bottom-left default.
+  musicStatusPosition: null,
+  musicLyricStyle: Object.freeze({
+    color: "#243044",
+    fontSize: 12,
+    controlSize: 31,
+  }),
+  // LLM (ZhipuAI / GLM) configuration. Configured via the in-app
+  // settings window (storage survives across restarts and uninstall
+  // because NSIS is set to deleteAppDataOnUninstall:false). The
+  // .env-based loading path was removed for packaged builds; this
+  // object is now the single source of truth.
+  llm: Object.freeze({
+    apiKey: "",
+    model: "glm-4-flash",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4",
+    systemPrompt: "",
+  }),
 });
 
 const FOCUS_RECORD_MAX = 50;
@@ -79,6 +101,47 @@ function normalizePosition(position) {
 // fields don't accidentally share bounds if the pet window size
 // changes in the future. Returns null for missing/invalid input so
 // callers fall back to their built-in default position.
+function normalizeLlmSettings(llm) {
+  const defaults = defaultPetSettings.llm;
+  if (!llm || typeof llm !== "object") {
+    return { ...defaults };
+  }
+  const allowedModels = new Set(["glm-4-flash", "glm-4-air", "glm-4", "glm-4-plus"]);
+  const rawModel = typeof llm.model === "string" && llm.model.trim()
+    ? llm.model.trim()
+    : defaults.model;
+  const model = allowedModels.has(rawModel) ? rawModel : defaults.model;
+  return {
+    apiKey: typeof llm.apiKey === "string" ? llm.apiKey : defaults.apiKey,
+    model,
+    endpoint: typeof llm.endpoint === "string" && llm.endpoint.trim()
+      ? llm.endpoint.trim()
+      : defaults.endpoint,
+    systemPrompt: typeof llm.systemPrompt === "string"
+      ? llm.systemPrompt
+      : defaults.systemPrompt,
+  };
+}
+
+function normalizeMusicLyricStyle(style) {
+  const defaults = defaultPetSettings.musicLyricStyle;
+  if (!style || typeof style !== "object") {
+    return { ...defaults };
+  }
+  const color = typeof style.color === "string" && /^#[0-9a-f]{6}$/i.test(style.color.trim())
+    ? style.color.trim()
+    : defaults.color;
+  const fontSizeNumber = Number(style.fontSize);
+  const fontSize = Number.isFinite(fontSizeNumber) && fontSizeNumber >= 10 && fontSizeNumber <= 22
+    ? Math.round(fontSizeNumber)
+    : defaults.fontSize;
+  const controlSizeNumber = Number(style.controlSize);
+  const controlSize = Number.isFinite(controlSizeNumber) && controlSizeNumber >= 24 && controlSizeNumber <= 44
+    ? Math.round(controlSizeNumber)
+    : defaults.controlSize;
+  return { color, fontSize, controlSize };
+}
+
 function normalizeWidgetPosition(value) {
   if (!value || typeof value !== "object") {
     return null;
@@ -198,6 +261,10 @@ function normalizePetSettings(settings = {}) {
       : defaultPetSettings.clockEnabled,
     musicPanelPosition: normalizeWidgetPosition(settings.musicPanelPosition),
     clockPosition: normalizeWidgetPosition(settings.clockPosition),
+    focusIndicatorPosition: normalizeWidgetPosition(settings.focusIndicatorPosition),
+    musicStatusPosition: normalizeWidgetPosition(settings.musicStatusPosition),
+    musicLyricStyle: normalizeMusicLyricStyle(settings.musicLyricStyle),
+    llm: normalizeLlmSettings(settings.llm),
   };
 }
 

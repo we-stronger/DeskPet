@@ -66,3 +66,58 @@ test("renderer index.html loads shared music command policy before renderer", ()
   assert.ok(rendererIdx >= 0, "index.html must load renderer.js");
   assert.ok(musicCommandIdx < rendererIdx, "music-command.js must load before renderer.js");
 });
+
+test("renderer index.html loads shape and music status helpers before renderer", () => {
+  const html = fs.readFileSync(path.join(root, "src", "renderer", "index.html"), "utf8");
+  const tags = extractScriptTags(html);
+
+  const shapeIdx = indexOf(tags, "pet-shape-rects.js");
+  const musicStatusIdx = indexOf(tags, "music-status-view.js");
+  const rendererIdx = indexOf(tags, "renderer.js");
+
+  assert.ok(shapeIdx >= 0, "index.html must load pet-shape-rects.js");
+  assert.ok(musicStatusIdx >= 0, "index.html must load music-status-view.js");
+  assert.ok(rendererIdx >= 0, "index.html must load renderer.js");
+  assert.ok(shapeIdx < rendererIdx, "pet-shape-rects.js must load before renderer.js");
+  assert.ok(musicStatusIdx < rendererIdx, "music-status-view.js must load before renderer.js");
+});
+
+test("music pages load hidden audio fallback before playback scripts", () => {
+  const cases = [
+    { file: "index.html", host: "music-panel.js" },
+    { file: "music.html", host: "music.js" },
+    { file: "music-search.html", host: "music-search.js" },
+  ];
+
+  for (const { file, host } of cases) {
+    const html = fs.readFileSync(path.join(root, "src", "renderer", file), "utf8");
+    const tags = extractScriptTags(html);
+    const audioIdx = indexOf(tags, "audio-player.js");
+    const hostIdx = indexOf(tags, host);
+
+    assert.ok(audioIdx >= 0, `${file} must load audio-player.js`);
+    assert.ok(hostIdx >= 0, `${file} must load ${host}`);
+    assert.ok(audioIdx < hostIdx, `${file} must load audio-player.js before ${host}`);
+  }
+});
+
+test("music pages load shared playback service before music hosts", () => {
+  const cases = [
+    { file: "index.html", host: "music-panel.js" },
+    { file: "music.html", host: "music.js" },
+  ];
+
+  for (const { file, host } of cases) {
+    const html = fs.readFileSync(path.join(root, "src", "renderer", file), "utf8");
+    const tags = extractScriptTags(html);
+    const audioIdx = indexOf(tags, "audio-player.js");
+    const serviceIdx = indexOf(tags, "music-playback-service.js");
+    const hostIdx = indexOf(tags, host);
+
+    assert.ok(audioIdx >= 0, `${file} must load audio-player.js`);
+    assert.ok(serviceIdx >= 0, `${file} must load music-playback-service.js`);
+    assert.ok(hostIdx >= 0, `${file} must load ${host}`);
+    assert.ok(audioIdx < serviceIdx, `${file} must load audio-player.js before music-playback-service.js`);
+    assert.ok(serviceIdx < hostIdx, `${file} must load music-playback-service.js before ${host}`);
+  }
+});

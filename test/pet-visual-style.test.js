@@ -21,6 +21,15 @@ test("computes a centered visual box without transform scaling", () => {
   });
 });
 
+test("centers the pet vertically when the transparent stage is larger than the base sprite", () => {
+  assert.deepEqual(visualBoxForScale({ width: 640, height: 640 }, 0.8), {
+    width: 512,
+    height: 512,
+    left: 64,
+    bottom: 64,
+  });
+});
+
 test("clamps visual box scale instead of allowing unbounded growth", () => {
   assert.deepEqual(visualBoxForScale({ width: 512, height: 512 }, 99), {
     width: 1024,
