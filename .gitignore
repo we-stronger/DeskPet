@@ -11,6 +11,8 @@ release/
 .runtime-user-data*/
 .env
 .env.local
+AGENTS.md
+CLAUDE.md
 # Reference repo (Binaryify/NetEaseCloudMusicApi fork) — see docs/ for
 # which files are consulted. Not part of the DeskPet project.
 api-enhanced-main/
