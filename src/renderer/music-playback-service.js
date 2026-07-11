@@ -7,6 +7,8 @@
   let currentQueuePlaylistId = "";
   let playMode = "sequence";
   let history = [];
+  let stateBridge = null;
+  let unsubscribeState = null;
 
   function isValidSongId(songId) {
     if (typeof songId === "string") return songId.trim() !== "";
@@ -36,19 +38,94 @@
   }
 
   function cloneQueueItem(item) {
-    return item ? { id: item.id, title: item.title || "", artist: item.artist || "", playlistId: item.playlistId || "" } : null;
+    if (!item) return null;
+    const cloned = {
+      id: item.id,
+      title: item.title || "",
+      artist: item.artist || "",
+      playlistId: item.playlistId || "",
+    };
+    if (item.playedAt) cloned.playedAt = item.playedAt;
+    return cloned;
   }
 
-  function recordHistory(songId, meta = {}) {
+  function recordHistory(songId, meta = {}, deps = {}) {
     const id = String(songId);
     const fromQueue = currentQueue.find((item) => item.id === id);
     const item = normalizeQueueItem({
       id,
       title: meta.title || (fromQueue && fromQueue.title) || "",
       artist: meta.artist || (fromQueue && fromQueue.artist) || "",
+      playlistId: (fromQueue && fromQueue.playlistId) || "",
     });
     if (!item) return;
+    item.playedAt = new Date(nowMs(deps)).toISOString();
     history = [item, ...history.filter((entry) => entry.id !== item.id)].slice(0, HISTORY_MAX);
+  }
+
+  function hydratePlaybackState(state = {}) {
+    const source = state && typeof state === "object" ? state : {};
+    playMode = normalizeMode(source.mode);
+    currentQueue = Array.isArray(source.queue)
+      ? source.queue.map(normalizeQueueItem).filter(Boolean)
+      : [];
+    const requestedIndex = Number(source.currentIndex);
+    currentQueueIndex = currentQueue.length
+      ? Math.max(0, Math.min(
+        currentQueue.length - 1,
+        Number.isInteger(requestedIndex) ? requestedIndex : 0,
+      ))
+      : -1;
+    const current = currentQueue[currentQueueIndex];
+    currentQueuePlaylistId = current && current.playlistId ? current.playlistId : "";
+    const seen = new Set();
+    history = (Array.isArray(source.history) ? source.history : [])
+      .map((entry) => {
+        const item = normalizeQueueItem(entry);
+        if (item && typeof entry.playedAt === "string") item.playedAt = entry.playedAt;
+        return item;
+      })
+      .filter((item) => {
+        if (!item || seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      })
+      .slice(0, HISTORY_MAX);
+    return getPlaybackState();
+  }
+
+  async function syncPlaybackState(bridge = stateBridge) {
+    if (!bridge || typeof bridge.getMusicPlaybackState !== "function") {
+      return getPlaybackState();
+    }
+    stateBridge = bridge;
+    const state = await bridge.getMusicPlaybackState().catch(() => null);
+    return state ? hydratePlaybackState(state) : getPlaybackState();
+  }
+
+  async function persistPlaybackState(bridge = stateBridge) {
+    if (!bridge || typeof bridge.updateMusicPlaybackState !== "function") {
+      return { success: true, state: getPlaybackState(), persisted: false };
+    }
+    stateBridge = bridge;
+    const result = await bridge.updateMusicPlaybackState(getPlaybackState()).catch(() => null);
+    if (result && result.success && result.state) hydratePlaybackState(result.state);
+    return result || { success: false, error: "playback-state-save-failed" };
+  }
+
+  function connectPlaybackState(bridge) {
+    if (!bridge) return Promise.resolve(getPlaybackState());
+    stateBridge = bridge;
+    if (unsubscribeState) {
+      unsubscribeState();
+      unsubscribeState = null;
+    }
+    if (typeof bridge.onMusicPlaybackStateChanged === "function") {
+      unsubscribeState = bridge.onMusicPlaybackStateChanged((state) => {
+        hydratePlaybackState(state);
+      });
+    }
+    return syncPlaybackState(bridge);
   }
 
   function rememberQueue(queue, songId, mode, playlistId) {
@@ -213,7 +290,8 @@
     updateQueueIndex(songId);
     const result = await playDirectAudio(songId, deps, { openFallbackOnFailure: false });
     if (result && result.success) {
-      recordHistory(songId, deps.meta);
+      recordHistory(songId, deps.meta, deps);
+      await persistPlaybackState(deps.bridge);
     }
     return result;
   }
@@ -260,6 +338,7 @@
   }
 
   async function playAdjacent(offset, deps = {}) {
+    await syncPlaybackState(deps.bridge);
     if (!currentQueue.length || currentQueueIndex < 0) {
       return { success: false, error: "no-queue" };
     }
@@ -288,16 +367,17 @@
     return playAdjacent(-1, deps);
   }
 
-  function setPlaybackMode(mode) {
+  function setPlaybackMode(mode, deps = {}) {
     playMode = normalizeMode(mode);
+    persistPlaybackState(deps.bridge || stateBridge).catch(() => {});
     return { success: true, mode: playMode };
   }
 
-  function cyclePlaybackMode() {
+  function cyclePlaybackMode(deps = {}) {
     const modes = ["sequence", "shuffle", "repeat-one", "heartbeat"];
     const current = modes.indexOf(playMode);
     const next = modes[(current + 1) % modes.length] || "sequence";
-    return setPlaybackMode(next);
+    return setPlaybackMode(next, deps);
   }
 
   function getPlaybackState() {
@@ -310,13 +390,48 @@
     };
   }
 
+  function getPlaybackCapabilities() {
+    const hasQueue = currentQueue.length > 0 && currentQueueIndex >= 0;
+    return {
+      hasQueue,
+      canPlayPrevious: hasQueue,
+      canPlayNext: hasQueue,
+    };
+  }
+
+  async function removeHistoryItem(songId, bridge = stateBridge) {
+    if (!bridge || typeof bridge.removeMusicHistoryItem !== "function") {
+      return { success: false, error: "history-remove-unavailable" };
+    }
+    stateBridge = bridge;
+    const result = await bridge.removeMusicHistoryItem(songId).catch(() => null);
+    if (result && result.success && result.state) hydratePlaybackState(result.state);
+    return result || { success: false, error: "history-remove-failed" };
+  }
+
+  async function clearHistory(bridge = stateBridge) {
+    if (!bridge || typeof bridge.clearMusicHistory !== "function") {
+      return { success: false, error: "history-clear-unavailable" };
+    }
+    stateBridge = bridge;
+    const result = await bridge.clearMusicHistory().catch(() => null);
+    if (result && result.success && result.state) hydratePlaybackState(result.state);
+    return result || { success: false, error: "history-clear-failed" };
+  }
+
   const api = {
+    clearHistory,
+    connectPlaybackState,
+    hydratePlaybackState,
     playNext,
     playPrevious,
     playSongWithFallback,
     setPlaybackMode,
     cyclePlaybackMode,
+    getPlaybackCapabilities,
     getPlaybackState,
+    removeHistoryItem,
+    syncPlaybackState,
     shouldUseAudioFallback,
   };
 

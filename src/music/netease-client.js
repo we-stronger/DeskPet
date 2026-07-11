@@ -1,6 +1,5 @@
 const https = require("node:https");
 const { URLSearchParams } = require("node:url");
-const { buildWeapiBody } = require("./netease-weapi");
 
 const API_BASE = "https://music.163.com";
 const REQUEST_TIMEOUT_MS = 8000;
@@ -43,6 +42,7 @@ function normalizePlaylist(raw, ownerUserId) {
     coverImgUrl: typeof raw.coverImgUrl === "string" ? raw.coverImgUrl : "",
     creator: raw.creator && typeof raw.creator.nickname === "string" ? raw.creator.nickname : "",
     creatorId,
+    specialType: Number.isFinite(Number(raw.specialType)) ? Number(raw.specialType) : 0,
     editable: hasOwnerContext
       ? String(creatorId) === String(ownerUserId) && raw.subscribed !== true
       : undefined,
@@ -408,24 +408,26 @@ async function manipulatePlaylistTracks({ op, playlistId, songIds, cookie, reque
   }
 }
 
-async function likeSong(songId, like = true, { cookie, request } = {}) {
+async function likeSong(songId, like = true, { userId, cookie, request } = {}) {
   if (!cookie) return { success: false, error: "not-logged-in" };
   if (songId === undefined || songId === null || songId === "") {
     return { success: false, error: "empty-id" };
   }
-  const body = buildWeapiBody({
-    alg: "itembased",
+  const fields = {
     trackId: String(songId),
-    like: like !== false,
-    time: 3,
-    csrf_token: extractCsrf(cookie),
-  });
+    like: String(like !== false),
+  };
+  if (userId !== undefined && userId !== null && userId !== "") {
+    fields.userid = String(userId);
+  }
+  const body = new URLSearchParams(fields).toString();
   try {
     const res = await requestJson({
       method: "POST",
-      path: "/weapi/radio/like",
+      path: "/api/song/like",
       body,
       cookie,
+      appendPcCookie: false,
       request,
     });
     if (res.json && res.json.code === 200) {
@@ -434,6 +436,34 @@ async function likeSong(songId, like = true, { cookie, request } = {}) {
     return { success: false, error: mapApiError(res.json, "likeSong") };
   } catch (error) {
     return { success: false, error: (error && error.message) || "network-error" };
+  }
+}
+
+async function checkLikedSongs(songIds, { cookie, request } = {}) {
+  if (!cookie) return { success: false, error: "not-logged-in", liked: {} };
+  const ids = (Array.isArray(songIds) ? songIds : [songIds])
+    .filter((id) => id !== undefined && id !== null && id !== "")
+    .map((id) => String(id));
+  if (!ids.length) return { success: false, error: "empty-id", liked: {} };
+  const body = new URLSearchParams({
+    trackIds: JSON.stringify(ids),
+  }).toString();
+  try {
+    const res = await requestJson({
+      method: "POST",
+      path: "/api/song/like/check",
+      body,
+      cookie,
+      appendPcCookie: false,
+      request,
+    });
+    const data = res.json && res.json.data;
+    if (res.json && res.json.code === 200 && data && typeof data === "object") {
+      return { success: true, liked: data };
+    }
+    return { success: false, error: mapApiError(res.json, "checkLikedSongs"), liked: {} };
+  } catch (error) {
+    return { success: false, error: (error && error.message) || "network-error", liked: {} };
   }
 }
 
@@ -522,6 +552,7 @@ module.exports = {
   getFmSong,
   manipulatePlaylistTracks,
   likeSong,
+  checkLikedSongs,
   getIntelligenceList,
   trashFmSong,
   withPcCookie,

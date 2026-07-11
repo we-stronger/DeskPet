@@ -203,7 +203,44 @@ test("bubble prefers right margin over left when both fit (idle pose)", () => {
   });
 
   assert.ok(anchor);
-  assert.equal(anchor.side, "right", "bubble should pick the right margin first");
+  assert.equal(anchor.side, "pet-top-right", "bubble should use the dedicated pet top-right anchor");
+  assert.ok(anchor.x > bbox.x + bbox.width / 2, "bubble should sit on the pet's right side");
+  assert.ok(anchor.y >= bbox.y, "bubble should stay near the pet's upper body instead of floating above the sprite");
+});
+
+test("bubble top-right anchor clamps back inside the stage when the pet is close to the right edge", () => {
+  const bbox = { x: 390, y: 30, width: 96, height: 360 };
+  const widgetSize = { width: 180, height: 78 };
+
+  const anchor = computeWidgetAnchor({
+    role: "bubble",
+    widgetSize,
+    imageData: { width: 512, height: 512 },
+    margins: [],
+    bbox,
+    padding: 4,
+  });
+
+  assert.ok(anchor);
+  assert.equal(anchor.side, "pet-top-right");
+  assert.ok(anchor.x <= 512 - widgetSize.width - 4,
+    `bubble left edge (${anchor.x}) must stay inside the stage width`);
+});
+
+test("bubble top-right anchor stays within a 6-14px preferred gap before clamping", () => {
+  const bbox = { x: 120, y: 40, width: 150, height: 380 };
+  const anchor = computeWidgetAnchor({
+    role: "bubble",
+    widgetSize: { width: 180, height: 78 },
+    imageData: { width: 512, height: 512 },
+    margins: [],
+    bbox,
+    padding: 4,
+  });
+
+  const gap = anchor.x - (bbox.x + bbox.width);
+  assert.ok(gap >= 6, `expected at least 6px of space, got ${gap}`);
+  assert.ok(gap <= 14, `expected at most 14px of space, got ${gap}`);
 });
 
 test("bubble and clock do not share a side on idle pose", () => {

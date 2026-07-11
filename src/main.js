@@ -30,6 +30,14 @@ const {
   buildCloudMusicArgv,
 } = require("./netease-search");
 const { createMusicController } = require("./music/music-controller");
+const {
+  clearHistory,
+  loadPlaybackState,
+  normalizePlaybackState,
+  removeHistoryEntry,
+  savePlaybackState,
+} = require("./music/music-playback-store");
+const { createChatMemoryController } = require("./chat/chat-memory-controller");
 const auth = require("./music/netease-auth");
 const { startLoginWindow, sessionCookieString } = require("./music/netease-login-window");
 const { chat: llmChat } = require("./llm-client");
@@ -57,10 +65,12 @@ let musicSearchWindow;
 let chatWindow;
 let tray;
 let appSettings = { ...defaultPetSettings };
+let musicPlaybackState = normalizePlaybackState();
 let activeLoginWindow = null;
 let nextAudioHostRequestId = 1;
 const pendingAudioHostRequests = new Map();
 let neteaseWebPlayerWindow;
+let chatMemoryController;
 
 // Size of the standalone music-search window. Big enough to show full
 // result rows (title + artist 璺?album + duration + play button) without
@@ -125,6 +135,123 @@ app.commandLine.appendSwitch("disable-pinch");
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 function settingsPath() {
   return path.join(app.getPath("userData"), "deskpet-settings.json");
+}
+
+function musicPlaybackStatePath() {
+  return path.join(app.getPath("userData"), "music-playback-state.json");
+}
+
+function chatMemoryStatePath() {
+  return path.join(app.getPath("userData"), "chat-memory-state.json");
+}
+
+function currentLlmSettings() {
+  return (appSettings && appSettings.llm) || {};
+}
+
+async function callConfiguredLlm(messages, overrideSystemPrompt) {
+  const llm = currentLlmSettings();
+  if (!llm.apiKey) {
+    return { success: false, error: "missing-api-key" };
+  }
+  return llmChat(messages, {
+    apiKey: llm.apiKey,
+    model: llm.model,
+    endpoint: llm.endpoint,
+    systemPrompt: overrideSystemPrompt == null ? llm.systemPrompt : overrideSystemPrompt,
+  });
+}
+
+function parseJsonBlock(text) {
+  if (typeof text !== "string" || !text.trim()) {
+    return null;
+  }
+  const trimmed = text.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch (_error) {
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (!fenced) {
+      return null;
+    }
+    try {
+      return JSON.parse(fenced[1].trim());
+    } catch (_nestedError) {
+      return null;
+    }
+  }
+}
+
+function buildChatMemorySummarizerPrompt({ summary, profile, memories, messages }) {
+  const profileLines = [
+    `displayName: ${profile && profile.displayName ? profile.displayName : ""}`,
+    `relationshipTone: ${profile && profile.relationshipTone ? profile.relationshipTone : ""}`,
+    `preferences: ${(profile && Array.isArray(profile.preferences) ? profile.preferences : []).join(", ")}`,
+    `facts: ${(profile && Array.isArray(profile.facts) ? profile.facts : []).join(", ")}`,
+    `avoidances: ${(profile && Array.isArray(profile.avoidances) ? profile.avoidances : []).join(", ")}`,
+  ];
+  const history = Array.isArray(messages)
+    ? messages.map((item) => `${item.role}: ${item.content}`).join("\n")
+    : "";
+  const memoryLines = Array.isArray(memories)
+    ? memories.map((memory) => `${memory.category}: ${memory.content}${memory.pinned ? " (pinned)" : ""}`).join("\n")
+    : "";
+  return [
+    "You summarize chat memory for a desktop pet.",
+    "Return JSON only.",
+    'Schema: {"summary":"Rolling context","profile":{"displayName":"","relationshipTone":"","preferences":[],"facts":[],"avoidances":[]},"memories":[{"category":"preference","content":"prefers calm music"}]}',
+    "Keep summary concise and cumulative.",
+    "Only store stable facts, preferences, or durable relationship signals in memories.",
+    `Existing summary:\n${summary || ""}`,
+    `Existing profile:\n${profileLines.join("\n")}`,
+    `Existing memory entries:\n${memoryLines}`,
+    `New conversation chunk:\n${history}`,
+  ].join("\n\n");
+}
+
+function getChatMemoryController() {
+  if (chatMemoryController) {
+    return chatMemoryController;
+  }
+  chatMemoryController = createChatMemoryController({
+    statePath: chatMemoryStatePath(),
+    systemPrompt: () => currentLlmSettings().systemPrompt || "",
+    chat: async (messages) => callConfiguredLlm(messages),
+    summarize: async ({ messages, summary, profile, memories }) => {
+      const prompt = buildChatMemorySummarizerPrompt({ messages, summary, profile, memories });
+      const result = await callConfiguredLlm([
+        { role: "user", content: prompt },
+      ], "");
+      if (!(result && result.success && typeof result.content === "string")) {
+        return { success: false, error: (result && result.error) || "summary-failed" };
+      }
+      const payload = parseJsonBlock(result.content);
+      if (!payload || typeof payload !== "object") {
+        return { success: false, error: "invalid-summary-json" };
+      }
+      return {
+        success: true,
+        summary: typeof payload.summary === "string" ? payload.summary : "",
+        profile: payload.profile && typeof payload.profile === "object" ? payload.profile : {},
+        memories: Array.isArray(payload.memories) ? payload.memories : null,
+      };
+    },
+  });
+  return chatMemoryController;
+}
+
+function broadcastMusicPlaybackState() {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send("music:playback-state-changed", musicPlaybackState);
+    }
+  }
+}
+
+function persistMusicPlaybackState(nextState) {
+  musicPlaybackState = savePlaybackState(musicPlaybackStatePath(), nextState);
+  broadcastMusicPlaybackState();
+  return musicPlaybackState;
 }
 
 function persistSettings(nextSettings = appSettings) {
@@ -879,6 +1006,7 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   installNeteaseMediaHeaderPatch();
   appSettings = loadPetSettings(settingsPath());
+  musicPlaybackState = loadPlaybackState(musicPlaybackStatePath());
   createPetWindow();
   createTray();
 
@@ -1084,19 +1212,100 @@ ipcMain.handle("music:open-in-netease", async (_event, { url } = {}) => {
 });
 
 ipcMain.handle("llm:chat", async (_event, { messages } = {}) => {
-  // Pull credentials from appSettings (saved via the settings window)
-  // rather than from process.env, so end users can configure LLM via
-  // the UI without editing a .env file.
-  const llm = (appSettings && appSettings.llm) || {};
-  if (!llm.apiKey) {
-    return { success: false, error: "missing-api-key" };
+  return callConfiguredLlm(messages);
+});
+
+ipcMain.handle("chat:get-state", async () => {
+  try {
+    const controller = getChatMemoryController();
+    return {
+      success: true,
+      mode: "remembered",
+      state: controller.getState(),
+    };
+  } catch (err) {
+    return { success: false, error: err && err.message, mode: "remembered", state: null };
   }
-  return llmChat(messages, {
-    apiKey: llm.apiKey,
-    model: llm.model,
-    endpoint: llm.endpoint,
-    systemPrompt: llm.systemPrompt,
-  });
+});
+
+ipcMain.handle("chat:set-mode", async (_event, { mode } = {}) => {
+  try {
+    return getChatMemoryController().setMode(mode);
+  } catch (err) {
+    return { success: false, error: err && err.message, mode: "remembered" };
+  }
+});
+
+ipcMain.handle("chat:send", async (_event, payload = {}) => {
+  try {
+    return await getChatMemoryController().sendMessage(payload);
+  } catch (err) {
+    return { success: false, error: err && err.message, state: null };
+  }
+});
+
+ipcMain.handle("chat:clear-recent", async () => {
+  try {
+    return { success: true, state: getChatMemoryController().clearRecentMemory() };
+  } catch (err) {
+    return { success: false, error: err && err.message, state: null };
+  }
+});
+
+ipcMain.handle("chat:clear-all", async () => {
+  try {
+    return { success: true, state: getChatMemoryController().clearAllMemory() };
+  } catch (err) {
+    return { success: false, error: err && err.message, state: null };
+  }
+});
+
+ipcMain.handle("chat:get-memory-summary", async () => {
+  try {
+    return { success: true, summary: getChatMemoryController().getMemorySummary() };
+  } catch (err) {
+    return { success: false, error: err && err.message, summary: null };
+  }
+});
+
+ipcMain.handle("chat:list-memories", async (_event, options = {}) => {
+  try {
+    return { success: true, memories: getChatMemoryController().listMemories(options) };
+  } catch (err) {
+    return { success: false, error: err && err.message, memories: [] };
+  }
+});
+
+ipcMain.handle("chat:create-memory", async (_event, payload = {}) => {
+  try {
+    return getChatMemoryController().createMemory(payload);
+  } catch (err) {
+    return { success: false, error: err && err.message, state: null };
+  }
+});
+
+ipcMain.handle("chat:update-memory", async (_event, payload = {}) => {
+  try {
+    return getChatMemoryController().updateMemory(payload);
+  } catch (err) {
+    return { success: false, error: err && err.message, state: null };
+  }
+});
+
+ipcMain.handle("chat:delete-memory", async (_event, { id } = {}) => {
+  try {
+    return getChatMemoryController().deleteMemory(id);
+  } catch (err) {
+    return { success: false, error: err && err.message, state: null };
+  }
+});
+
+ipcMain.handle("chat:clear-summary", async () => {
+  try {
+    return { success: true, state: getChatMemoryController().clearSummary() };
+  } catch (err) {
+    return { success: false, error: err && err.message, state: null };
+  }
 });
 
 ipcMain.handle("chat:bubble-show", async (_event, { text } = {}) => {
@@ -1228,6 +1437,46 @@ ipcMain.handle("music:like-song", async (_event, { id, like } = {}) => {
     return await musicController.likeSong(id, like);
   } catch (err) {
     return { success: false, error: err && err.message };
+  }
+});
+
+ipcMain.handle("music:check-liked-songs", async (_event, { ids } = {}) => {
+  try {
+    return await musicController.checkLikedSongs(ids);
+  } catch (err) {
+    return { success: false, error: err && err.message, liked: {} };
+  }
+});
+
+ipcMain.handle("music:playback-state:get", () => musicPlaybackState);
+
+ipcMain.handle("music:playback-state:update", (_event, state = {}) => {
+  try {
+    return { success: true, state: persistMusicPlaybackState(state) };
+  } catch (err) {
+    return { success: false, error: err && err.message, state: musicPlaybackState };
+  }
+});
+
+ipcMain.handle("music:playback-history:remove", (_event, { id } = {}) => {
+  try {
+    return {
+      success: true,
+      state: persistMusicPlaybackState(removeHistoryEntry(musicPlaybackState, id)),
+    };
+  } catch (err) {
+    return { success: false, error: err && err.message, state: musicPlaybackState };
+  }
+});
+
+ipcMain.handle("music:playback-history:clear", () => {
+  try {
+    return {
+      success: true,
+      state: persistMusicPlaybackState(clearHistory(musicPlaybackState)),
+    };
+  } catch (err) {
+    return { success: false, error: err && err.message, state: musicPlaybackState };
   }
 });
 

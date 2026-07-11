@@ -88,6 +88,21 @@ contextBridge.exposeInMainWorld("deskpet", {
   likeSong(id, like = true) {
     return ipcRenderer.invoke("music:like-song", { id, like });
   },
+  checkLikedSongs(ids) {
+    return ipcRenderer.invoke("music:check-liked-songs", { ids: Array.isArray(ids) ? ids : [ids] });
+  },
+  getMusicPlaybackState() {
+    return ipcRenderer.invoke("music:playback-state:get");
+  },
+  updateMusicPlaybackState(state) {
+    return ipcRenderer.invoke("music:playback-state:update", state || {});
+  },
+  removeMusicHistoryItem(id) {
+    return ipcRenderer.invoke("music:playback-history:remove", { id });
+  },
+  clearMusicHistory() {
+    return ipcRenderer.invoke("music:playback-history:clear");
+  },
   getIntelligenceList(payload) {
     return ipcRenderer.invoke("music:get-intelligence-list", payload || {});
   },
@@ -112,6 +127,39 @@ contextBridge.exposeInMainWorld("deskpet", {
   chat(messages) {
     return ipcRenderer.invoke("llm:chat", { messages });
   },
+  getChatState() {
+    return ipcRenderer.invoke("chat:get-state");
+  },
+  setChatMode(mode) {
+    return ipcRenderer.invoke("chat:set-mode", { mode });
+  },
+  sendChatMessage(payload) {
+    return ipcRenderer.invoke("chat:send", payload || {});
+  },
+  clearRecentChatMemory() {
+    return ipcRenderer.invoke("chat:clear-recent");
+  },
+  clearAllChatMemory() {
+    return ipcRenderer.invoke("chat:clear-all");
+  },
+  getChatMemorySummary() {
+    return ipcRenderer.invoke("chat:get-memory-summary");
+  },
+  listChatMemories(options) {
+    return ipcRenderer.invoke("chat:list-memories", options || {});
+  },
+  createChatMemory(payload) {
+    return ipcRenderer.invoke("chat:create-memory", payload || {});
+  },
+  updateChatMemory(payload) {
+    return ipcRenderer.invoke("chat:update-memory", payload || {});
+  },
+  deleteChatMemory(id) {
+    return ipcRenderer.invoke("chat:delete-memory", { id });
+  },
+  clearChatMemorySummary() {
+    return ipcRenderer.invoke("chat:clear-summary");
+  },
   showChatReplyInBubble(text) {
     return ipcRenderer.invoke("chat:bubble-show", { text });
   },
@@ -119,6 +167,11 @@ contextBridge.exposeInMainWorld("deskpet", {
     const listener = (_event, command) => callback(command);
     ipcRenderer.on("pet:command", listener);
     return () => ipcRenderer.off("pet:command", listener);
+  },
+  onMusicPlaybackStateChanged(callback) {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on("music:playback-state-changed", listener);
+    return () => ipcRenderer.off("music:playback-state-changed", listener);
   },
   close() {
     return ipcRenderer.invoke("window:close");

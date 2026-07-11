@@ -19,6 +19,16 @@ test("renderMusicStatusBar includes playback, panel, and app controls", () => {
   assert.match(html, /❧|🍃/);
 });
 
+test("renderMusicStatusBar disables adjacent controls when the queue is unavailable", () => {
+  const html = renderMusicStatusBar({
+    playbackCapabilities: { canPlayPrevious: false, canPlayNext: false },
+  });
+
+  assert.match(html, /data-music-action="previous"[^>]*disabled/);
+  assert.match(html, /data-music-action="next"[^>]*disabled/);
+  assert.doesNotMatch(html, /data-music-action="playPause"[^>]*disabled/);
+});
+
 test("music status CSS allows lyric text to wrap instead of clipping one line", () => {
   const css = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "styles.css"), "utf8");
 
@@ -66,4 +76,5 @@ test("music status CSS exposes decorative lyric controls styling", () => {
   assert.match(css, /var\(--music-lyric-color/);
   assert.match(css, /var\(--music-lyric-size/);
   assert.match(css, /var\(--music-control-size/);
+  assert.match(css, /\.music-status-bar__button:disabled/);
 });

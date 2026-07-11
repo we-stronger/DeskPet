@@ -233,3 +233,37 @@ test("controller forwards like, intelligence, and FM trash operations", async ()
   assert.deepEqual(calls[1], ["intelligence", { songId: 7, playlistId: 9, count: 5, cookie: "MUSIC_U=ops" }]);
   assert.deepEqual(calls[2], ["trash", 7, "MUSIC_U=ops"]);
 });
+
+test("controller falls back to the liked playlist when song-like API fails", async () => {
+  const calls = [];
+  const client = {
+    likeSong: async () => ({ success: false, error: "api-401" }),
+    getProfile: async () => ({ success: true, profile: { userId: 9, nickname: "User" } }),
+    getUserPlaylists: async () => ({
+      success: true,
+      playlists: [
+        { id: 100, name: "Other", specialType: 0, editable: true },
+        { id: 200, name: "Liked", specialType: 5, editable: true },
+      ],
+    }),
+    manipulatePlaylistTracks: async (payload) => {
+      calls.push(payload);
+      return { success: true };
+    },
+  };
+  const ctrl = createMusicController({
+    client,
+    sessionStore: makeFakeStore({ cookie: "MUSIC_U=ops" }),
+  });
+
+  const result = await ctrl.likeSong(7, true);
+
+  assert.equal(result.success, true);
+  assert.equal(result.method, "liked-playlist-fallback");
+  assert.deepEqual(calls[0], {
+    op: "add",
+    playlistId: 200,
+    songIds: [7],
+    cookie: "MUSIC_U=ops",
+  });
+});

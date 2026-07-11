@@ -126,7 +126,8 @@ test("compact music panel exposes playlist play modes and local playback history
   assert.match(playlistViewJs, /data-play-mode="shuffle"/);
   assert.match(playlistViewJs, /data-play-mode="heartbeat"/);
   assert.match(panelJs, /showPlaybackHistory/);
-  assert.match(panelJs, /getPlaybackState\(\)\.history/);
+  assert.match(panelJs, /syncPlaybackState\(bridge\)/);
+  assert.match(panelJs, /renderPlaybackList\(history/);
   assert.match(rendererJs, /state\.ended/);
   assert.match(rendererJs, /DeskpetMusicPlaybackService\.playNext/);
 });
@@ -157,6 +158,38 @@ test("music UI exposes playback mode switching and playlist write actions", () =
   assert.match(statusViewJs, /cycleMode/);
 });
 
+test("music UI exposes shared queue and editable persisted history", () => {
+  const panelJs = fs.readFileSync(path.join(root, "src", "renderer", "music-panel.js"), "utf8");
+  const windowHtml = fs.readFileSync(path.join(root, "src", "renderer", "music.html"), "utf8");
+  const windowJs = fs.readFileSync(path.join(root, "src", "renderer", "music.js"), "utf8");
+  const viewJs = fs.readFileSync(path.join(root, "src", "renderer", "music-search-view.js"), "utf8");
+
+  assert.match(panelJs, /music-panel-queue-btn/);
+  assert.match(panelJs, /showPlaybackQueue/);
+  assert.match(panelJs, /removeHistoryItem/);
+  assert.match(panelJs, /clearHistory/);
+  assert.match(windowHtml, /music-window-queue-btn/);
+  assert.match(windowHtml, /music-window-history-btn/);
+  assert.match(windowJs, /fetchPlaybackQueue/);
+  assert.match(windowJs, /fetchPlaybackHistory/);
+  assert.match(viewJs, /renderPlaybackList/);
+  assert.match(viewJs, /is-current/);
+  assert.match(viewJs, /is-next/);
+  assert.match(viewJs, /music-history-delete/);
+});
+
+test("heart buttons load and toggle actual liked-song state", () => {
+  const panelJs = fs.readFileSync(path.join(root, "src", "renderer", "music-panel.js"), "utf8");
+  const windowJs = fs.readFileSync(path.join(root, "src", "renderer", "music.js"), "utf8");
+  const preloadJs = fs.readFileSync(path.join(root, "src", "preload.js"), "utf8");
+
+  assert.match(preloadJs, /checkLikedSongs/);
+  assert.match(panelJs, /refreshLikedButtons/);
+  assert.match(panelJs, /aria-pressed/);
+  assert.match(windowJs, /refreshLikedButtons/);
+  assert.match(windowJs, /aria-pressed/);
+});
+
 test("standalone music window uses playlist chooser instead of a prompt", () => {
   const musicJs = fs.readFileSync(path.join(root, "src", "renderer", "music.js"), "utf8");
   const panelJs = fs.readFileSync(path.join(root, "src", "renderer", "music-panel.js"), "utf8");
@@ -166,6 +199,16 @@ test("standalone music window uses playlist chooser instead of a prompt", () => 
   assert.match(musicJs, /music-panel-add-target/);
   assert.match(musicJs, /\.filter\(\(playlist\) => playlist\.editable !== false\)/);
   assert.match(panelJs, /\.filter\(\(playlist\) => playlist\.editable !== false\)/);
+});
+
+test("playlist song deletion requires confirmation in both music surfaces", () => {
+  const musicJs = fs.readFileSync(path.join(root, "src", "renderer", "music.js"), "utf8");
+  const panelJs = fs.readFileSync(path.join(root, "src", "renderer", "music-panel.js"), "utf8");
+
+  assert.match(panelJs, /confirmPlaylistSongRemoval/);
+  assert.match(panelJs, /确定从歌单中删除/);
+  assert.match(musicJs, /confirmPlaylistSongRemoval/);
+  assert.match(musicJs, /确定从歌单中删除/);
 });
 
 test("music status playback modes render compact icons with accessible labels", () => {

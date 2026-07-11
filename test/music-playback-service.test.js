@@ -167,6 +167,30 @@ test("playPrevious reports no-queue before a playlist-backed song is played", as
   assert.deepEqual(result, { success: false, error: "no-queue" });
 });
 
+test("playback capabilities keep adjacent controls unavailable without a queue", () => {
+  const localService = loadService();
+
+  assert.deepEqual(localService.getPlaybackCapabilities(), {
+    hasQueue: false,
+    canPlayPrevious: false,
+    canPlayNext: false,
+  });
+});
+
+test("playback capabilities enable adjacent controls after a queue is restored", () => {
+  const localService = loadService();
+  localService.hydratePlaybackState({
+    queue: [{ id: "one", title: "One" }],
+    currentIndex: 0,
+  });
+
+  assert.deepEqual(localService.getPlaybackCapabilities(), {
+    hasQueue: true,
+    canPlayPrevious: true,
+    canPlayNext: true,
+  });
+});
+
 test("playNext can use shuffle mode without replaying the current song", async () => {
   const localService = loadService();
   const played = [];
@@ -295,4 +319,73 @@ test("heartbeat mode asks NetEase intelligence list before local fallback", asyn
   assert.equal(result.success, true);
   assert.equal(result.songId, "smart");
   assert.deepEqual(calls[1], ["getIntelligenceList", { songId: "seed", playlistId: "liked", count: 20 }]);
+});
+
+test("playback service hydrates queue and history from the shared store", async () => {
+  const localService = loadService();
+  const state = await localService.syncPlaybackState({
+    getMusicPlaybackState: async () => ({
+      mode: "shuffle",
+      queue: [
+        { id: "one", title: "One" },
+        { id: "two", title: "Two" },
+      ],
+      currentIndex: 1,
+      history: [{ id: "one", title: "One", playedAt: "2026-07-09T00:00:00.000Z" }],
+    }),
+  });
+
+  assert.equal(state.mode, "shuffle");
+  assert.equal(state.current.id, "two");
+  assert.equal(state.history[0].playedAt, "2026-07-09T00:00:00.000Z");
+});
+
+test("successful playback persists shared queue and history", async () => {
+  const localService = loadService();
+  const updates = [];
+  const bridge = {
+    fetchSongUrl: async () => ({ success: true, url: "http://127.0.0.1/audio" }),
+    getSongLyric: async () => ({ success: true, lyric: "", tlyric: "" }),
+    updateMusicPlaybackState: async (state) => {
+      updates.push(state);
+      return { success: true, state };
+    },
+  };
+
+  await localService.playSongWithFallback("one", {
+    bridge,
+    audioPlayer: { playUrl: async () => ({ success: true, method: "audio" }) },
+    queue: [{ id: "one", title: "One", artist: "A" }],
+    meta: { title: "One", artist: "A" },
+    now: () => Date.parse("2026-07-09T01:02:03.000Z"),
+  });
+
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].currentIndex, 0);
+  assert.equal(updates[0].history[0].playedAt, "2026-07-09T01:02:03.000Z");
+});
+
+test("history removal and clear use the shared store result", async () => {
+  const localService = loadService();
+  localService.hydratePlaybackState({
+    history: [{ id: "one" }, { id: "two" }],
+  });
+  const bridge = {
+    removeMusicHistoryItem: async () => ({
+      success: true,
+      state: { history: [{ id: "two" }] },
+    }),
+    clearMusicHistory: async () => ({
+      success: true,
+      state: { history: [] },
+    }),
+  };
+
+  const removed = await localService.removeHistoryItem("one", bridge);
+  assert.equal(removed.success, true);
+  assert.deepEqual(localService.getPlaybackState().history.map((item) => item.id), ["two"]);
+
+  const cleared = await localService.clearHistory(bridge);
+  assert.equal(cleared.success, true);
+  assert.deepEqual(localService.getPlaybackState().history, []);
 });

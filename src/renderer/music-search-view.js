@@ -18,11 +18,46 @@
 
   function renderSongActions(id) {
     return `<div class="music-panel-song__actions">
-        <button type="button" class="music-panel-like-song" data-song-id="${id}" title="喜欢">♡</button>
+        <button type="button" class="music-panel-like-song" data-song-id="${id}" title="加入我喜欢" aria-label="加入我喜欢" aria-pressed="false">♡</button>
         <button type="button" class="music-panel-add-song" data-song-id="${id}" title="加入歌单">＋</button>
         <button type="button" class="music-panel-remove-song" data-song-id="${id}" title="从歌单删除">－</button>
         <button type="button" class="music-panel-open-song" data-song-id="${id}">播放</button>
       </div>`;
+  }
+
+  function renderPlaybackList(items, { kind = "queue", currentIndex = -1 } = {}) {
+    if (!Array.isArray(items) || items.length === 0) {
+      return `<div class="music-panel-empty">${kind === "history" ? "还没有播放历史。" : "播放队列为空。"}</div>`;
+    }
+    const rows = items.map((item, index) => {
+      const id = escapeHtml(item.id);
+      const title = escapeHtml(item.title || "未命名歌曲");
+      const artist = escapeHtml(item.artist || "未知歌手");
+      const isCurrent = kind === "queue" && index === currentIndex;
+      const isNext = kind === "queue" && index === currentIndex + 1;
+      const stateClass = isCurrent ? " is-current" : (isNext ? " is-next" : "");
+      const marker = isCurrent
+        ? '<span class="music-playback-marker">正在播放</span>'
+        : (isNext ? '<span class="music-playback-marker">下一首</span>' : "");
+      const deleteButton = kind === "history"
+        ? `<button type="button" class="music-history-delete" data-song-id="${id}" title="删除此条记录" aria-label="删除此条记录">⌫</button>`
+        : "";
+      return `<li class="music-playback-row${stateClass}" data-song-id="${id}">
+        <div class="music-playback-row__index">${index + 1}</div>
+        <div class="music-playback-row__main">
+          <div><strong>${title}</strong>${marker}</div>
+          <span>${artist}</span>
+        </div>
+        <div class="music-playback-row__actions">
+          <button type="button" class="music-playback-play" data-song-id="${id}" title="播放" aria-label="播放">▶</button>
+          ${deleteButton}
+        </div>
+      </li>`;
+    }).join("");
+    const toolbar = kind === "history"
+      ? '<div class="music-playback-toolbar"><span>最近播放</span><button type="button" class="music-history-clear">清空</button></div>'
+      : '<div class="music-playback-toolbar"><span>当前播放队列</span></div>';
+    return `${toolbar}<ol class="music-playback-list" data-playback-kind="${kind}">${rows}</ol>`;
   }
 
   function renderSongList(songs, { emptyText = "没有找到结果。" } = {}) {
@@ -49,6 +84,7 @@
   root.DeskpetMusicSearchView = {
     escapeHtml,
     formatDuration,
+    renderPlaybackList,
     renderSongList,
   };
 

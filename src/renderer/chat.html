@@ -13,7 +13,47 @@
           <span class="chat-window__icon" aria-hidden="true">💬</span>
           <h1>和我聊聊</h1>
         </div>
-        <p class="chat-window__hint">和桌宠随便聊点什么。Enter 发送，Shift + Enter 换行。</p>
+        <p class="chat-window__hint">默认会记住你们的对话。Enter 发送，Shift + Enter 换行。</p>
+        <div class="chat-window__mode-switch" role="tablist" aria-label="对话模式">
+          <button id="chat-mode-remembered" class="chat-window__mode-btn is-active" type="button">记忆对话</button>
+          <button id="chat-mode-temporary" class="chat-window__mode-btn" type="button">临时对话</button>
+        </div>
+        <p id="chat-mode-status" class="chat-window__mode-status" aria-live="polite">会保存并持续记住</p>
+        <div class="chat-window__memory-actions">
+          <button id="chat-memory-toggle" class="chat-window__memory-btn" type="button" aria-expanded="false" aria-controls="chat-memory-panel">管理记忆</button>
+          <button id="chat-clear-temporary" class="chat-window__memory-btn" type="button">清空临时会话</button>
+          <button id="chat-clear-recent" class="chat-window__memory-btn" type="button">清空短期记忆</button>
+          <button id="chat-clear-all-memory" class="chat-window__memory-btn chat-window__memory-btn--danger" type="button">清空全部记忆</button>
+        </div>
+        <details class="chat-window__memory-summary" id="chat-memory-summary">
+          <summary>长期记忆摘要</summary>
+          <pre id="chat-memory-summary-content" class="chat-window__memory-summary-content">暂无记忆</pre>
+        </details>
+        <section id="chat-memory-panel" class="chat-memory-panel" hidden aria-label="记忆管理">
+          <div class="chat-memory-panel__toolbar">
+            <input id="chat-memory-query" type="search" placeholder="搜索记忆" autocomplete="off" />
+            <select id="chat-memory-category" aria-label="筛选记忆类别">
+              <option value="">全部类别</option>
+              <option value="preference">偏好</option>
+              <option value="fact">事实</option>
+              <option value="avoidance">避免</option>
+              <option value="relationship">关系</option>
+            </select>
+          </div>
+          <ol id="chat-memory-list" class="chat-memory-list" aria-live="polite"></ol>
+          <form id="chat-memory-form" class="chat-memory-form">
+            <select id="chat-memory-new-category" aria-label="新增记忆类别">
+              <option value="preference">偏好</option>
+              <option value="fact">事实</option>
+              <option value="avoidance">避免</option>
+              <option value="relationship">关系</option>
+            </select>
+            <input id="chat-memory-new-content" required maxlength="280" placeholder="添加一条长期记忆" autocomplete="off" />
+            <label class="chat-memory-form__pin"><input id="chat-memory-new-pinned" type="checkbox" /> 固定</label>
+            <button class="chat-memory-form__submit" type="submit">添加</button>
+          </form>
+          <button id="chat-clear-summary" class="chat-window__memory-btn" type="button">清空对话摘要</button>
+        </section>
         <label class="chat-window__toggle">
           <input id="chat-bubble-toggle" type="checkbox" />
           <span class="chat-window__toggle-slider" aria-hidden="true"></span>

@@ -11,6 +11,10 @@ const ROLE_WIDGET_SIZE = {
   clock:  { width: 70, height: 50 },
 };
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
 function marginFits(margin, widgetSize, padding) {
   return margin.width >= widgetSize.width + padding * 2
       && margin.height >= widgetSize.height + padding * 2;
@@ -54,10 +58,27 @@ function anchorOutsidePet(bbox, imageWidth, imageHeight, widgetSize, padding) {
   return candidates.slice().sort((a, b) => score(b) - score(a))[0];
 }
 
-// Returns { side, x, y }. x is the widget's horizontal centre (callers rely
-// on CSS `transform: translateX(-50%)` to centre on it); y is the widget's
-// top-left in image/pet-relative pixels. side is one of
-// 'top'|'bottom'|'left'|'right' or 'outside-tl'|'outside-tr'|'outside-bl'|'outside-br'.
+function anchorBubbleTopRight(bbox, imageWidth, imageHeight, widgetSize, padding) {
+  const xOffset = clamp(Math.round(bbox.width * 0.06), 6, 14);
+  const yOffset = clamp(Math.round(bbox.height * 0.06), 10, 22);
+  const minLeft = padding;
+  const maxLeft = Math.max(padding, imageWidth - widgetSize.width - padding);
+  const minTop = padding;
+  const maxTop = Math.max(padding, imageHeight - widgetSize.height - padding);
+
+  return {
+    side: "pet-top-right",
+    x: clamp(bbox.x + bbox.width + xOffset, minLeft, maxLeft),
+    y: clamp(bbox.y + yOffset, minTop, maxTop),
+  };
+}
+
+// Returns { side, x, y }. For clock / margin anchors, x is the widget's
+// horizontal centre and y is the widget's top-left in image/pet-relative
+// pixels. For the bubble's dedicated `pet-top-right` anchor, x/y are the
+// widget's top-left so the bubble can grow rightward away from the pet.
+// side is one of 'top'|'bottom'|'left'|'right'|'pet-top-right' or
+// 'outside-tl'|'outside-tr'|'outside-bl'|'outside-br'.
 function computeWidgetAnchor({
   role = "clock",
   widgetSize,
@@ -75,6 +96,10 @@ function computeWidgetAnchor({
   const imgH = imageData && (imageData.height || imageData.width)
     ? (imageData.height || imageData.width)
     : (bbox.y + bbox.height + 100);
+
+  if (role === "bubble") {
+    return anchorBubbleTopRight(bbox, imgW, imgH, effectiveSize, padding);
+  }
 
   // Bubble defaults to right, clock to left; both can fall back to top when
   // L/R are too small (e.g. during sleep).

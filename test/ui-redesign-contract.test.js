@@ -87,6 +87,7 @@ test("glass UI stylesheet defines theme variables and preserves pointer event se
   assert.match(renderer, /addVisibleUiShapeRect\(rects, focusIndicator\)/);
   assert.match(renderer, /function refreshPetShape\(\)/);
   assert.match(renderer, /bridge\.setPetShape\(rects\)/);
+  assert.match(renderer, /pet-top-right/);
 
   // mood-bubble restyle: smaller font, rounded-rectangle (not pill), gradient background
   const bubbleRuleMatch = css.match(/\.mood-bubble\s*{([^}]*)}/);
@@ -117,6 +118,41 @@ test("glass UI stylesheet defines theme variables and preserves pointer event se
     /gradient/,
     "mood-bubble background should use a gradient"
   );
+  const maxWidthMatch = bubbleBody.match(/\bmax-width:\s*(\d+)px/);
+  assert.ok(maxWidthMatch, "mood-bubble should declare a max-width");
+  assert.ok(
+    Number(maxWidthMatch[1]) >= 220,
+    `mood-bubble should expand for longer lines, got max-width ${maxWidthMatch[1]}px`
+  );
+
+  const bubbleAfterMatch = css.match(/\.mood-bubble::after\s*{([^}]*)}/);
+  assert.ok(bubbleAfterMatch, "should find a .mood-bubble::after rule");
+  const bubbleAfterBody = bubbleAfterMatch[1];
+  assert.doesNotMatch(
+    bubbleAfterBody,
+    /left:\s*50%/,
+    "bubble tail should no longer be centered once the bubble moves to the pet's top-right"
+  );
+});
+
+test("renderer loads and uses persistent widget coordination without replacing sprite anchors", () => {
+  const html = fs.readFileSync(path.join(root, "src", "renderer", "index.html"), "utf8");
+  const renderer = fs.readFileSync(path.join(root, "src", "renderer", "renderer.js"), "utf8");
+
+  assert.match(html, /<script src="\.\/widget-coordination\.js"><\/script>/);
+  assert.match(renderer, /DeskpetWidgetCoordination/);
+  assert.match(renderer, /coordinatePinnedWidgetPositions/);
+  assert.match(renderer, /isDraggingFocus/);
+  assert.match(renderer, /isDraggingMusic/);
+});
+
+test("focus controls expose their active state and block duplicate starts", () => {
+  const renderer = fs.readFileSync(path.join(root, "src", "renderer", "renderer.js"), "utf8");
+
+  assert.match(renderer, /focusStart\.disabled\s*=/);
+  assert.match(renderer, /breakStart\.disabled\s*=/);
+  assert.match(renderer, /focusPause\.disabled\s*=/);
+  assert.match(renderer, /setAttribute\("aria-pressed"/);
 });
 
 

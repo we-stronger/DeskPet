@@ -490,14 +490,36 @@ test("manipulatePlaylistTracks uses the compatible playlist endpoint for delete"
   assert.match(calls[0].body, /op=del/);
 });
 
-test("likeSong posts encrypted weapi radio like request", async () => {
+test("likeSong uses the normal song-like endpoint", async () => {
   const { fn, calls } = fakeRequest([fakeResponse({ body: { code: 200 } })]);
-  const result = await client.likeSong(42, false, { cookie: "MUSIC_U=abc", request: fn });
+  const result = await client.likeSong(42, false, {
+    userId: 7,
+    cookie: "MUSIC_U=abc",
+    request: fn,
+  });
 
   assert.equal(result.success, true);
-  assert.equal(calls[0].path, "/weapi/radio/like");
-  assert.match(calls[0].body, /^params=.+&encSecKey=[0-9a-f]{256}$/);
-  assert.doesNotMatch(calls[0].body, /trackId=42|like=false/);
+  assert.equal(calls[0].path, "/api/song/like");
+  assert.equal(calls[0].headers.Cookie, "MUSIC_U=abc");
+  assert.match(calls[0].body, /trackId=42/);
+  assert.match(calls[0].body, /userid=7/);
+  assert.match(calls[0].body, /like=false/);
+});
+
+test("checkLikedSongs returns liked state by song id", async () => {
+  const { fn, calls } = fakeRequest([
+    fakeResponse({ body: { code: 200, data: { 42: true, 43: false } } }),
+  ]);
+
+  const result = await client.checkLikedSongs([42, 43], {
+    cookie: "MUSIC_U=abc",
+    request: fn,
+  });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(result.liked, { 42: true, 43: false });
+  assert.equal(calls[0].path, "/api/song/like/check");
+  assert.match(decodeURIComponent(calls[0].body), /trackIds=\["42","43"\]/);
 });
 
 test("getIntelligenceList returns normalized songs from the official playmode endpoint", async () => {

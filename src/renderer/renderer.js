@@ -80,6 +80,8 @@
   // flicker). The drag end handler clears the flag and writes the
   // final position to clockPosition.
   let isDraggingClock = false;
+  let isDraggingFocus = false;
+  let isDraggingMusic = false;
   let focusIndicatorPosition = null;
   let musicStatusPosition = null;
   let musicStatusPlaying = false;
@@ -187,6 +189,45 @@
     musicStatusBar.style.top = "";
     musicStatusBar.style.right = "";
     musicStatusBar.style.bottom = "";
+  }
+  function coordinatePinnedWidgetPositions() {
+    const coordinator = window.DeskpetWidgetCoordination;
+    if (!coordinator || typeof coordinator.resolveWidgetPositions !== "function" || !stage) return;
+    const resolved = coordinator.resolveWidgetPositions({
+      stage: { width: stage.clientWidth || 512, height: stage.clientHeight || 512 },
+      music: {
+        visible: Boolean(musicStatusPosition),
+        position: musicStatusPosition || { x: 12, y: 12 },
+        size: { width: MUSIC_STATUS_WIDTH, height: MUSIC_STATUS_HEIGHT },
+      },
+      focus: {
+        visible: Boolean(focusIndicatorPosition && focusIndicator && !focusIndicator.hidden),
+        position: focusIndicatorPosition || { x: 12, y: 12 },
+        size: { width: 126, height: 34 },
+      },
+      clock: {
+        visible: Boolean(clockPosition && clockEl && !clockEl.hidden),
+        position: clockPosition || { x: 12, y: 12 },
+        size: { width: 76, height: 50 },
+      },
+    });
+    if (resolved.music && musicStatusBar && !isDraggingMusic) {
+      musicStatusBar.style.left = `${resolved.music.x}px`;
+      musicStatusBar.style.top = `${resolved.music.y}px`;
+      musicStatusBar.style.right = "auto";
+      musicStatusBar.style.bottom = "auto";
+    }
+    if (resolved.focus && focusIndicator && !isDraggingFocus) {
+      focusIndicator.style.left = `${resolved.focus.x}px`;
+      focusIndicator.style.top = `${resolved.focus.y}px`;
+      focusIndicator.style.right = "auto";
+      focusIndicator.style.bottom = "auto";
+    }
+    if (resolved.clock && clockEl && !isDraggingClock) {
+      clockEl.style.left = `${visualToCssLeft(resolved.clock.x)}px`;
+      clockEl.style.top = `${resolved.clock.y}px`;
+      clockEl.style.right = "auto";
+    }
   }
   const animation = new window.AnimationController({
     actions,
@@ -408,6 +449,7 @@
       playing: musicStatusPlaying,
       lyricStyle: musicLyricStyle,
       playMode: window.DeskpetMusicPlaybackService?.getPlaybackState?.().mode || "sequence",
+      playbackCapabilities: window.DeskpetMusicPlaybackService?.getPlaybackCapabilities?.() || {},
     });
     if (musicStatusPosition) applyMusicStatusPosition();
     requestAnimationFrame(refreshPetShape);
@@ -473,7 +515,7 @@
     }
     if (action === "cycleMode" && window.DeskpetMusicPlaybackService) {
       const result = typeof window.DeskpetMusicPlaybackService.cyclePlaybackMode === "function"
-        ? window.DeskpetMusicPlaybackService.cyclePlaybackMode()
+        ? window.DeskpetMusicPlaybackService.cyclePlaybackMode({ bridge })
         : { success: false };
       const label = window.DeskpetMusicStatusView?.modeLabel?.(result && result.mode) || "顺序";
       setMusicStatus(`播放模式：${label}`, { playing: musicStatusPlaying });
@@ -486,6 +528,11 @@
     };
     if (!map[action]) return;
     if ((action === "previous" || action === "next") && window.DeskpetMusicPlaybackService) {
+      const capabilities = window.DeskpetMusicPlaybackService.getPlaybackCapabilities?.();
+      if (capabilities && !capabilities.hasQueue) {
+        setMusicStatus("播放列表为空", { playing: musicStatusPlaying });
+        return;
+      }
       const queueResult = action === "next"
         ? await window.DeskpetMusicPlaybackService.playNext({
           bridge,
@@ -723,16 +770,12 @@
     pet.style.transform = facingLeft ? "scaleX(-1)" : "none";
   }
 
-  // Position the bubble + clock widgets inside the empty (transparent) margins
-  // of the current sprite so they never overlap the character. The image is
-  // scaled to fit the pet element with object-fit: contain; we map image
-  // margins back to stage coordinates with the same scale + offset math used
-  // for the clickable shape. When no in-image margin is large enough to host
-  // a widget (e.g. the sleep pose has only a small top strip and the clock
-  // would otherwise overlap the bbox that breathes frame-to-frame) the anchor
-  // returns an outside-pet corner relative to the pet bounding rect.
+  // Position the bubble + clock widgets around the current sprite. The clock
+  // still uses empty-margin / outside-pet anchoring, while the bubble uses a
+  // dedicated pet-top-right anchor so long text expands away from the pet
+  // instead of covering the face.
   const WIDGET_LAYOUT = {
-    bubble: { width: 110, height: 36 },
+    bubble: { width: 220, height: 84 },
     clock:  { width: 76, height: 50 },
   };
   function syncWidgetPositions(imageData) {
@@ -774,11 +817,10 @@
       });
     }
 
-    // Fallbacks: when the image isn't ready, place widgets in the centre of
-    // the pet rect (legacy behaviour). These are CSS-pixel positions, not
-    // image-pixel anchor outputs.
+    // Fallbacks when the image isn't ready. Keep the bubble near the pet's
+    // top-right and the clock near the old upper-middle slot.
     if (!bubbleAnchor) {
-      bubbleAnchor = { side: "fallback-centre", x: petRect.width / 2, y: petRect.height * 0.20 };
+      bubbleAnchor = { side: "fallback-top-right", x: petRect.width * 0.62, y: petRect.height * 0.15 };
     }
     if (!clockAnchor) {
       clockAnchor = { side: "fallback-centre", x: petRect.width / 2, y: petRect.height * 0.38 };
@@ -793,11 +835,19 @@
         // y is the relative top within the pet rect.
         stageX = petRect.left - stageRect.left + anchor.x;
         stageY = petRect.top - stageRect.top + anchor.y;
+      } else if (anchor.side === "fallback-top-right") {
+        stageX = petRect.left - stageRect.left + anchor.x;
+        stageY = petRect.top - stageRect.top + anchor.y;
       } else if (String(anchor.side).startsWith("outside-")) {
         // Pet-relative outside corner: x is widget centre (CSS translates),
         // y is the widget's top-left in CSS pixels.
         stageX = petRect.left - stageRect.left + anchor.x;
         stageY = petRect.top - stageRect.top + anchor.y;
+      } else if (anchor.side === "pet-top-right") {
+        // Bubble-specific image-space anchor. x/y are the widget's top-left in
+        // image pixels, not a centered point.
+        stageX = petRect.left - stageRect.left + offsetX + anchor.x * fitScale;
+        stageY = petRect.top - stageRect.top + offsetY + anchor.y * fitScale;
       } else {
         // Image-space anchor: x = widget centre in image px, y = widget top in image px.
         const imgX = anchor.x;
@@ -814,6 +864,7 @@
       // Mid-drag: the drag handler owns clockEl.style. Don't touch
       // it — that was the source of the strobe between the drag
       // handler's per-move write and this re-application.
+      coordinatePinnedWidgetPositions();
       return;
     }
     if (clockPosition) {
@@ -823,6 +874,7 @@
     } else {
       place(clockEl, clockAnchor);
     }
+    coordinatePinnedWidgetPositions();
   }
 
   function renderFrame() {
@@ -869,6 +921,22 @@
     scheduleFrames();
   }
 
+  function recoverAmbientAction() {
+    const audioPlayer = window.DeskpetAudioPlayer;
+    const audioState = audioPlayer && typeof audioPlayer.getState === "function"
+      ? audioPlayer.getState()
+      : null;
+    if (audioState && audioState.playing) {
+      play("music");
+      return;
+    }
+    if (petState.sleeping) {
+      play("sleep");
+      return;
+    }
+    play("idle");
+  }
+
   function playTemporary(action, durationMs) {
     play(action);
     if (action === "walk") {
@@ -877,7 +945,7 @@
     temporaryActionTimer = setTimeout(() => {
       if (animation.action === action) {
         stopWalkMovement();
-        play("idle");
+        recoverAmbientAction();
       }
     }, durationMs);
   }
@@ -1489,7 +1557,7 @@
     } else if (releaseAction === "idle") {
       petState.wake();
       savePetState();
-      play("idle");
+      recoverAmbientAction();
     }
 
     scheduleBlink();
@@ -1665,6 +1733,20 @@
     if (focusStart) focusStart.classList.toggle("is-active", focusTimer.phase === "focus" || focusTimer.phase === "paused-focus");
     if (breakStart) breakStart.classList.toggle("is-active", focusTimer.phase === "break" || focusTimer.phase === "paused-break");
     if (focusPause) focusPause.classList.toggle("is-active", focusTimer.phase === "paused-focus" || focusTimer.phase === "paused-break");
+    const active = focusTimer.phase !== "idle";
+    if (focusStart) {
+      focusStart.disabled = active;
+      focusStart.setAttribute("aria-pressed", focusTimer.phase === "focus" || focusTimer.phase === "paused-focus" ? "true" : "false");
+    }
+    if (breakStart) {
+      breakStart.disabled = active;
+      breakStart.setAttribute("aria-pressed", focusTimer.phase === "break" || focusTimer.phase === "paused-break" ? "true" : "false");
+    }
+    if (focusPause) {
+      focusPause.disabled = !active;
+      focusPause.setAttribute("aria-pressed", focusTimer.phase === "paused-focus" || focusTimer.phase === "paused-break" ? "true" : "false");
+    }
+    if (focusReset) focusReset.disabled = !active;
     updateFocusIndicator();
   }
 
@@ -1744,6 +1826,10 @@
   if (focusIndicator && window.DeskpetWidgetDrag && typeof window.DeskpetWidgetDrag.attachWidgetDrag === "function") {
     window.DeskpetWidgetDrag.attachWidgetDrag(focusIndicator, {
       threshold: 4,
+      onStart: () => {
+        isDraggingFocus = true;
+        focusIndicator.classList.add("is-dragging");
+      },
       onMove: ({ x, y }) => {
         const clamped = clampStageWidgetPosition({ x, y }, focusIndicator, 126, 34);
         focusIndicator.style.left = `${clamped.x}px`;
@@ -1754,6 +1840,8 @@
       onEnd: ({ x, y }) => {
         const clamped = clampStageWidgetPosition({ x, y }, focusIndicator, 126, 34);
         focusIndicatorPosition = clamped;
+        isDraggingFocus = false;
+        focusIndicator.classList.remove("is-dragging");
         if (typeof bridge.updateSettings === "function") {
           bridge.updateSettings({ focusIndicatorPosition: clamped }).catch(() => {});
         }
@@ -1765,6 +1853,10 @@
   if (musicStatusBar && window.DeskpetWidgetDrag && typeof window.DeskpetWidgetDrag.attachWidgetDrag === "function") {
     window.DeskpetWidgetDrag.attachWidgetDrag(musicStatusBar, {
       threshold: 4,
+      onStart: () => {
+        isDraggingMusic = true;
+        musicStatusBar.classList.add("is-dragging");
+      },
       onMove: ({ x, y }) => {
         const clamped = clampMusicStatusPosition({ x, y });
         musicStatusBar.style.left = `${clamped.x}px`;
@@ -1775,6 +1867,8 @@
       onEnd: ({ x, y }) => {
         const clamped = clampMusicStatusPosition({ x, y });
         musicStatusPosition = clamped;
+        isDraggingMusic = false;
+        musicStatusBar.classList.remove("is-dragging");
         if (typeof bridge.updateSettings === "function") {
           bridge.updateSettings({ musicStatusPosition: clamped }).catch(() => {});
         }
@@ -1784,6 +1878,9 @@
   }
 
   syncSettingsPanel();
+  window.DeskpetMusicPlaybackService?.connectPlaybackState?.(bridge).then(() => {
+    renderMusicStatus();
+  }).catch(() => {});
   setMusicStatus("待命");
   renderFrame();
   scheduleFrames();

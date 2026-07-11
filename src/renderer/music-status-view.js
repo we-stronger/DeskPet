@@ -8,8 +8,9 @@
       .replace(/'/g, "&#39;");
   }
 
-  function renderButton(action, label, title) {
-    return `<button class="music-status-bar__button" type="button" data-music-action="${action}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${label}</button>`;
+  function renderButton(action, label, title, { disabled = false } = {}) {
+    const disabledAttrs = disabled ? " disabled aria-disabled=\"true\"" : "";
+    return `<button class="music-status-bar__button" type="button" data-music-action="${action}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"${disabledAttrs}>${label}</button>`;
   }
 
   function normalizeLyricStyle(style = {}) {
@@ -50,6 +51,7 @@
     playing = false,
     lyricStyle = {},
     playMode = "sequence",
+    playbackCapabilities = {},
   } = {}) {
     const playLabel = playing ? "&#10074;&#10074;" : "&#9654;";
     const playTitle = playing ? "暂停/播放" : "播放/暂停";
@@ -69,9 +71,9 @@
         <span class="music-status-bar__lyric">${lyricHtml}</span>
       </div>
       <div class="music-status-bar__controls">
-        ${renderButton("previous", "&#9198;", "上一首")}
+        ${renderButton("previous", "&#9198;", "上一首", { disabled: playbackCapabilities.canPlayPrevious === false })}
         ${renderButton("playPause", playLabel, playTitle)}
-        ${renderButton("next", "&#9197;", "下一首")}
+        ${renderButton("next", "&#9197;", "下一首", { disabled: playbackCapabilities.canPlayNext === false })}
         ${renderButton("cycleMode", modeSymbol, `切换播放模式：${modeText}`)}
         ${renderButton("openPanel", "&#9635;", "打开音乐面板")}
         ${renderButton("account", "&#128100;", "网易云登录 / 退出登录")}

@@ -139,7 +139,49 @@ function createMusicController({
   async function likeSong(songId, like = true) {
     const cookie = await currentWriteCookie();
     if (!cookie) return { success: false, error: "not-logged-in" };
-    const result = await client.likeSong(songId, like, { cookie });
+    let profile = cachedProfile;
+    if (!profile && typeof client.getProfile === "function") {
+      const profileResult = await client.getProfile(cookie);
+      if (profileResult && profileResult.success) {
+        profile = profileResult.profile;
+        cachedProfile = profile;
+      }
+    }
+    const result = await client.likeSong(songId, like, {
+      cookie,
+      userId: profile && profile.userId,
+    });
+    if (result && result.success) return result;
+    if (result && result.error === "session-expired") clearLocalSession();
+    if (typeof client.getUserPlaylists !== "function"
+      || typeof client.manipulatePlaylistTracks !== "function") {
+      return result;
+    }
+    const userId = profile && profile.userId;
+    if (userId === undefined || userId === null || userId === "") return result;
+    const playlistsResult = await client.getUserPlaylists(userId, { cookie });
+    const likedPlaylist = playlistsResult && Array.isArray(playlistsResult.playlists)
+      ? playlistsResult.playlists.find((playlist) => Number(playlist.specialType) === 5)
+      : null;
+    if (!likedPlaylist) return result;
+    const fallback = await client.manipulatePlaylistTracks({
+      op: like === false ? "del" : "add",
+      playlistId: likedPlaylist.id,
+      songIds: [songId],
+      cookie,
+    });
+    return fallback && fallback.success
+      ? { ...fallback, songId, like: like !== false, method: "liked-playlist-fallback" }
+      : (fallback || result);
+  }
+
+  async function checkLikedSongs(songIds) {
+    const cookie = currentCookie();
+    if (!cookie) return { success: false, error: "not-logged-in", liked: {} };
+    if (typeof client.checkLikedSongs !== "function") {
+      return { success: false, error: "unsupported", liked: {} };
+    }
+    const result = await client.checkLikedSongs(songIds, { cookie });
     if (result && result.error === "session-expired") clearLocalSession();
     return result;
   }
@@ -241,6 +283,7 @@ function createMusicController({
     getFmSong,
     manipulatePlaylistTracks,
     likeSong,
+    checkLikedSongs,
     getIntelligenceList,
     trashFmSong,
     createQrKey,
