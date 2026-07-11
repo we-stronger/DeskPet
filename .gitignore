@@ -19,4 +19,5 @@ api-enhanced-main/
 # across the whole repo.
 C:UsersHP.claudeclaude-notify-signals*
 C:UsersHP.claudeclaude-notify-signals*/
+C?UsersHP.claudeclaude-notify-signals*
 .claude/
