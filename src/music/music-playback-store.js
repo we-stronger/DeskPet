@@ -85,10 +85,23 @@ function clearHistory(state) {
   };
 }
 
+function mergePlaybackStateForPersistence(currentState, nextState) {
+  const current = normalizePlaybackState(currentState);
+  const next = normalizePlaybackState(nextState);
+  if (current.history.length && !next.history.length) {
+    return {
+      ...next,
+      history: current.history,
+    };
+  }
+  return next;
+}
+
 module.exports = {
   HISTORY_MAX,
   clearHistory,
   loadPlaybackState,
+  mergePlaybackStateForPersistence,
   normalizePlaybackState,
   removeHistoryEntry,
   savePlaybackState,

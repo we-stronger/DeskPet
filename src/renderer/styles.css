@@ -407,7 +407,8 @@ body {
 
 .settings-panel input[type="number"],
 .settings-panel input[type="text"],
-.settings-panel input[type="search"] {
+.settings-panel input[type="search"],
+.settings-panel select {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -424,7 +425,8 @@ body {
 
 .settings-panel input[type="number"]:focus,
 .settings-panel input[type="text"]:focus,
-.settings-panel input[type="search"]:focus {
+.settings-panel input[type="search"]:focus,
+.settings-panel select:focus {
   border-color: rgba(79, 140, 255, 0.54);
   background: var(--surface-control-hover);
   box-shadow: 0 0 0 3px var(--accent-soft);
@@ -441,6 +443,29 @@ body {
 .settings-panel input[type="search"]::-webkit-search-cancel-button {
   -webkit-appearance: none;
   margin: 0;
+}
+
+.focus-task-presets {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.focus-task-presets button {
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid rgba(120, 132, 152, 0.16);
+  border-radius: var(--radius-sm);
+  background: var(--surface-control);
+  color: var(--text-muted);
+  font: 720 11px/1.1 var(--font-ui);
+  cursor: pointer;
+}
+
+.focus-task-presets button:hover {
+  border-color: rgba(79, 140, 255, 0.34);
+  background: var(--surface-control-hover);
+  color: var(--accent);
 }
 
 .settings-panel__buttons {
@@ -722,6 +747,10 @@ body {
   cursor: grabbing;
 }
 
+.music-status-bar.is-click-through {
+  pointer-events: none;
+}
+
 .music-status-bar::before {
   content: "✦ ✧";
   position: absolute;
@@ -878,6 +907,26 @@ body {
   font-weight: 650;
 }
 
+.music-status-bar__widgets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.music-status-bar__widget {
+  max-width: 100%;
+  padding: 2px 6px;
+  overflow: hidden;
+  border: 1px solid rgba(120, 132, 152, 0.14);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.36);
+  color: var(--text-muted);
+  font: 720 10px/1.2 var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .music-status-bar__lyric {
   display: grid;
   gap: 2px;
@@ -905,7 +954,7 @@ body {
 
 .music-status-bar__controls {
   display: inline-grid;
-  grid-template-columns: repeat(7, var(--music-control-size, 31px));
+  grid-template-columns: repeat(9, var(--music-control-size, 31px));
   justify-content: center;
   justify-self: center;
   gap: 8px;
@@ -977,6 +1026,18 @@ body {
   gap: 0;
   font-family: "Segoe UI Symbol", var(--font-ui);
   font-size: calc(var(--music-control-size, 31px) * 0.5);
+}
+
+.music-status-bar__button[data-music-action="toggleLike"][aria-pressed="true"] {
+  color: var(--accent-3);
+  border-color: rgba(216, 100, 146, 0.38);
+  background: rgba(255, 233, 241, 0.68);
+}
+
+.music-status-bar__like-mark {
+  display: inline-grid;
+  place-items: center;
+  line-height: 1;
 }
 
 .music-status-bar__button[data-music-action="cycleMode"] small {
@@ -2894,6 +2955,23 @@ body.settings-window {
   resize: vertical;
   min-height: 70px;
   font-family: var(--font-ui);
+}
+
+.settings-window__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(29, 36, 48, 0.10);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-window__check input {
+  accent-color: var(--accent);
 }
 
 .settings-window__help {

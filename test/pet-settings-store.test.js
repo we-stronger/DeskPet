@@ -53,6 +53,12 @@ test("normalizes missing and invalid settings to safe defaults", () => {
       pendingTaskName: "",
       focusRecords: [],
       clockEnabled: true,
+      clockDisplayMode: "floating",
+      focusIndicatorEnabled: true,
+      focusDisplayMode: "floating",
+      petClickThroughEnabled: false,
+      musicStatusClickThroughEnabled: false,
+      musicStatusOpacityPercent: 100,
       musicPanelPosition: null,
       clockPosition: null,
       focusIndicatorPosition: null,
@@ -132,6 +138,12 @@ test("loads and saves normalized settings as JSON", () => {
     pendingTaskName: "",
     focusRecords: [],
     clockEnabled: true,
+    clockDisplayMode: "floating",
+    focusIndicatorEnabled: true,
+    focusDisplayMode: "floating",
+    petClickThroughEnabled: false,
+    musicStatusClickThroughEnabled: false,
+    musicStatusOpacityPercent: 100,
     musicPanelPosition: null,
     clockPosition: null,
     focusIndicatorPosition: null,
@@ -177,6 +189,12 @@ test("loads and saves normalized settings as JSON", () => {
     pendingTaskName: "",
     focusRecords: [],
     clockEnabled: true,
+    clockDisplayMode: "floating",
+    focusIndicatorEnabled: true,
+    focusDisplayMode: "floating",
+    petClickThroughEnabled: false,
+    musicStatusClickThroughEnabled: false,
+    musicStatusOpacityPercent: 100,
     musicPanelPosition: null,
     clockPosition: null,
     focusIndicatorPosition: null,
@@ -297,4 +315,44 @@ test("normalizes music lyric style settings", () => {
     musicLyricStyle: { color: "javascript:bad", fontSize: 999, controlSize: 8 },
   });
   assert.deepEqual(fallback.musicLyricStyle, defaultPetSettings.musicLyricStyle);
+});
+
+test("allows custom AI model names and endpoints", () => {
+  const normalized = normalizePetSettings({
+    llm: {
+      apiKey: "sk-custom",
+      model: "qwen-plus",
+      endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      systemPrompt: "Use a concise tone.",
+    },
+  });
+
+  assert.deepEqual(normalized.llm, {
+    apiKey: "sk-custom",
+    model: "qwen-plus",
+    endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    systemPrompt: "Use a concise tone.",
+  });
+});
+
+test("normalizes click-through and music status opacity settings", () => {
+  const customized = normalizePetSettings({
+    petClickThroughEnabled: true,
+    musicStatusClickThroughEnabled: true,
+    musicStatusOpacityPercent: 64.4,
+  });
+
+  assert.equal(customized.petClickThroughEnabled, true);
+  assert.equal(customized.musicStatusClickThroughEnabled, true);
+  assert.equal(customized.musicStatusOpacityPercent, 64);
+
+  const fallback = normalizePetSettings({
+    petClickThroughEnabled: "yes",
+    musicStatusClickThroughEnabled: "yes",
+    musicStatusOpacityPercent: 5,
+  });
+
+  assert.equal(fallback.petClickThroughEnabled, false);
+  assert.equal(fallback.musicStatusClickThroughEnabled, false);
+  assert.equal(fallback.musicStatusOpacityPercent, 100);
 });

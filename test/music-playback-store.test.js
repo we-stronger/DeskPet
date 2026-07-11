@@ -7,6 +7,7 @@ const test = require("node:test");
 const {
   clearHistory,
   loadPlaybackState,
+  mergePlaybackStateForPersistence,
   normalizePlaybackState,
   removeHistoryEntry,
   savePlaybackState,
@@ -77,4 +78,31 @@ test("history entries can be removed individually or cleared", () => {
 
   assert.deepEqual(removeHistoryEntry(state, 1).history.map((item) => item.id), ["2"]);
   assert.deepEqual(clearHistory(state).history, []);
+});
+
+test("mergePlaybackStateForPersistence preserves existing history from stale renderer updates", () => {
+  const current = normalizePlaybackState({
+    mode: "sequence",
+    history: [{ id: 1, title: "One", playedAt: "2026-07-09T00:00:00.000Z" }],
+  });
+
+  const merged = mergePlaybackStateForPersistence(current, {
+    mode: "shuffle",
+    queue: [{ id: 2, title: "Two" }],
+    currentIndex: 0,
+    history: [],
+  });
+
+  assert.equal(merged.mode, "shuffle");
+  assert.deepEqual(merged.queue.map((item) => item.id), ["2"]);
+  assert.deepEqual(merged.history.map((item) => item.id), ["1"]);
+});
+
+test("mergePlaybackStateForPersistence accepts a new non-empty history", () => {
+  const merged = mergePlaybackStateForPersistence(
+    { history: [{ id: 1, title: "One" }] },
+    { history: [{ id: 2, title: "Two" }] },
+  );
+
+  assert.deepEqual(merged.history.map((item) => item.id), ["2"]);
 });

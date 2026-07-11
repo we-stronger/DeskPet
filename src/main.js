@@ -33,6 +33,7 @@ const { createMusicController } = require("./music/music-controller");
 const {
   clearHistory,
   loadPlaybackState,
+  mergePlaybackStateForPersistence,
   normalizePlaybackState,
   removeHistoryEntry,
   savePlaybackState,
@@ -1087,6 +1088,12 @@ ipcMain.handle("pet:set-shape", (_event, { rect } = {}) => {
   return { success: true, shape };
 });
 
+ipcMain.handle("pet:set-mouse-events-ignored", (_event, { ignored } = {}) => {
+  if (!petWindow || petWindow.isDestroyed()) return { success: false, error: "no-pet-window" };
+  petWindow.setIgnoreMouseEvents(ignored === true, { forward: true });
+  return { success: true, ignored: ignored === true };
+});
+
 ipcMain.handle("window:close", () => {
   app.quit();
 });
@@ -1452,7 +1459,7 @@ ipcMain.handle("music:playback-state:get", () => musicPlaybackState);
 
 ipcMain.handle("music:playback-state:update", (_event, state = {}) => {
   try {
-    return { success: true, state: persistMusicPlaybackState(state) };
+    return { success: true, state: persistMusicPlaybackState(mergePlaybackStateForPersistence(musicPlaybackState, state)) };
   } catch (err) {
     return { success: false, error: err && err.message, state: musicPlaybackState };
   }

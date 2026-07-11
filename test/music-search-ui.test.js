@@ -190,6 +190,16 @@ test("heart buttons load and toggle actual liked-song state", () => {
   assert.match(windowJs, /aria-pressed/);
 });
 
+test("in-app music playback passes known liked state to the status bar metadata", () => {
+  const panelJs = fs.readFileSync(path.join(root, "src", "renderer", "music-panel.js"), "utf8");
+  const rendererJs = fs.readFileSync(path.join(root, "src", "renderer", "renderer.js"), "utf8");
+
+  assert.match(panelJs, /songFromActionButton[\s\S]*liked:/);
+  assert.match(panelJs, /meta:\s*{\s*title,\s*artist,\s*liked:/);
+  assert.match(rendererJs, /Object\.prototype\.hasOwnProperty\.call\(meta,\s*"liked"\)/);
+  assert.doesNotMatch(rendererJs, /liked:\s*meta\.liked === true/);
+});
+
 test("standalone music window uses playlist chooser instead of a prompt", () => {
   const musicJs = fs.readFileSync(path.join(root, "src", "renderer", "music.js"), "utf8");
   const panelJs = fs.readFileSync(path.join(root, "src", "renderer", "music-panel.js"), "utf8");

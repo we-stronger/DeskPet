@@ -224,6 +224,40 @@ test("playNext can use shuffle mode without replaying the current song", async (
   assert.deepEqual(played, ["one", "three"]);
 });
 
+test("playPrevious in shuffle mode returns to the actual previous song", async () => {
+  const localService = loadService();
+  const played = [];
+  const deps = {
+    bridge: {
+      fetchSongUrl: async (id) => ({ success: true, url: `http://127.0.0.1:4567/audio/${id}` }),
+      getSongLyric: async () => ({ success: true, lyric: "", tlyric: "" }),
+    },
+    audioPlayer: {
+      playUrl: async (_url, meta) => {
+        played.push(meta.songId);
+        return { success: true, method: "audio" };
+      },
+    },
+    random: () => 0.99,
+  };
+
+  await localService.playSongWithFallback("one", {
+    ...deps,
+    mode: "shuffle",
+    queue: [
+      { id: "one", title: "One" },
+      { id: "two", title: "Two" },
+      { id: "three", title: "Three" },
+    ],
+  });
+  await localService.playNext(deps);
+  const previous = await localService.playPrevious(deps);
+
+  assert.equal(previous.success, true);
+  assert.equal(previous.songId, "one");
+  assert.deepEqual(played, ["one", "three", "one"]);
+});
+
 test("playback service records history and exposes current queue state", async () => {
   const localService = loadService();
   const deps = {

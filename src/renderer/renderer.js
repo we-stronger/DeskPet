@@ -38,6 +38,13 @@
   const focusRecordsClear = document.querySelector("#focus-records-clear");
   const clockEl = document.querySelector("#clock");
   const clockEnabledInput = document.querySelector("#clock-enabled-input");
+  const clockDisplayModeInput = document.querySelector("#clock-display-mode-input");
+  const focusIndicatorEnabledInput = document.querySelector("#focus-indicator-enabled-input");
+  const focusDisplayModeInput = document.querySelector("#focus-display-mode-input");
+  const petClickThroughInput = document.querySelector("#pet-click-through-input");
+  const musicStatusClickThroughInput = document.querySelector("#music-status-click-through-input");
+  const musicStatusOpacityInput = document.querySelector("#music-status-opacity-input");
+  const musicStatusOpacityOutput = document.querySelector("#music-status-opacity-output");
   const settings = window.DeskpetSettings;
   const moodBubbleApi = window.DeskpetMoodBubble;
   const pointerPolicy = window.DeskpetPointerActionPolicy;
@@ -51,8 +58,15 @@
   let mouseReactEnabled = true;
   let dailyGreetingEnabled = true;
   let clockEnabled = true;
+  let clockDisplayMode = "floating";
+  let focusIndicatorEnabled = true;
+  let focusDisplayMode = "floating";
+  let petClickThroughEnabled = false;
+  let musicStatusClickThroughEnabled = false;
+  let musicStatusOpacityPercent = 100;
   let focusActive = false;
   let clockIntervalId = 0;
+  let lastMouseEventsIgnored = null;
   const walkMovementRunner = new window.WalkMovementRunner({
     movement: new window.WalkMovement({ stepPx: 8, maxDistancePx: 192 }),
     moveBy: (dx, dy) => window.deskpet.moveBy(dx, dy),
@@ -86,7 +100,7 @@
   let musicStatusPosition = null;
   let musicStatusPlaying = false;
   let musicLyricStyle = { color: "#243044", fontSize: 12, controlSize: 31 };
-  let musicStatusState = { title: "网易云音乐", artist: "", status: "待命", lyric: "", translation: "" };
+  let musicStatusState = { title: "网易云音乐", artist: "", status: "待命", lyric: "", translation: "", songId: "", liked: false };
   let audioStatusUnsubscribe = null;
   const BASE_PET_VISUAL_SIZE = 512;
   const MUSIC_STATUS_WIDTH = 400;
@@ -146,6 +160,16 @@
       : 31;
     return { color, fontSize, controlSize };
   }
+  function normalizeWidgetDisplayMode(mode) {
+    return mode === "music" || mode === "hidden" ? mode : "floating";
+  }
+  function normalizeMusicStatusOpacity(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < 20 || number > 100) {
+      return 100;
+    }
+    return Math.round(number);
+  }
   function applyMusicLyricStyle(style) {
     musicLyricStyle = normalizeMusicLyricStyle(style);
     setMusicStatus(musicStatusState, { playing: musicStatusPlaying });
@@ -182,6 +206,20 @@
     musicStatusBar.style.top = `${musicStatusPosition.y}px`;
     musicStatusBar.style.right = "auto";
     musicStatusBar.style.bottom = "auto";
+  }
+  function applyMusicStatusPresentation() {
+    if (!musicStatusBar) return;
+    musicStatusBar.style.opacity = String(Math.max(0.2, Math.min(1, musicStatusOpacityPercent / 100)));
+    musicStatusBar.classList.toggle("is-click-through", musicStatusClickThroughEnabled);
+  }
+  function applyPetMouseEventsPolicy() {
+    if (!bridge || typeof bridge.setPetMouseEventsIgnored !== "function") return;
+    const ignored = petClickThroughEnabled || musicStatusClickThroughEnabled;
+    if (ignored === lastMouseEventsIgnored) return;
+    lastMouseEventsIgnored = ignored;
+    bridge.setPetMouseEventsIgnored(ignored).catch(() => {
+      lastMouseEventsIgnored = null;
+    });
   }
   function clearMusicStatusPosition() {
     if (!musicStatusBar) return;
@@ -412,10 +450,11 @@
 
   function updateClockWidget() {
     if (!clockEl) return;
-    if (!clockEnabled) {
+    if (!clockEnabled || clockDisplayMode !== "floating") {
       clockEl.hidden = true;
       clockEl.classList.remove("is-visible");
       refreshPetShape();
+      setMusicStatus(musicStatusState, { playing: musicStatusPlaying });
       return;
     }
     const now = new Date();
@@ -423,6 +462,22 @@
     clockEl.hidden = false;
     clockEl.classList.add("is-visible");
     requestAnimationFrame(refreshPetShape);
+  }
+
+  function clockSummaryText() {
+    if (!clockEnabled || clockDisplayMode !== "music") return "";
+    return clock.format(new Date());
+  }
+
+  function focusSummaryText() {
+    if (!focusIndicatorEnabled || focusDisplayMode !== "music" || focusTimer.phase === "idle") return "";
+    const total = Math.max(0, Math.ceil(focusTimer.remainingMs / 1000));
+    const mm = String(Math.floor(total / 60)).padStart(2, "0");
+    const ss = String(total % 60).padStart(2, "0");
+    const phaseLabel = focusTimer.phase.includes("break") ? "休息" : "专注";
+    const paused = focusTimer.phase.startsWith("paused") ? "已暂停 · " : "";
+    const task = currentFocusTaskName || pendingTaskName;
+    return `${phaseLabel} ${paused}${mm}:${ss}${task ? ` · ${task}` : ""}`;
   }
 
   function startClockInterval() {
@@ -450,8 +505,11 @@
       lyricStyle: musicLyricStyle,
       playMode: window.DeskpetMusicPlaybackService?.getPlaybackState?.().mode || "sequence",
       playbackCapabilities: window.DeskpetMusicPlaybackService?.getPlaybackCapabilities?.() || {},
+      clockSummary: clockSummaryText(),
+      focusSummary: focusSummaryText(),
     });
     if (musicStatusPosition) applyMusicStatusPosition();
+    applyMusicStatusPresentation();
     requestAnimationFrame(refreshPetShape);
   }
 
@@ -462,13 +520,30 @@
   function audioStateStatus(state) {
     const meta = state && state.meta ? state.meta : {};
     const lyric = state && state.currentLyric;
-    return {
+    const status = {
       title: meta.title || "网易云音乐",
       artist: meta.artist || "",
+      songId: meta.songId || "",
       status: state && state.playing ? "正在播放" : "已暂停",
       lyric: lyric && lyric.text ? lyric.text : "",
       translation: lyric && lyric.translation ? lyric.translation : "",
     };
+    if (Object.prototype.hasOwnProperty.call(meta, "liked")) {
+      status.liked = meta.liked === true;
+    }
+    return status;
+  }
+
+  async function refreshCurrentLikedState(songId) {
+    const id = songId ? String(songId) : "";
+    if (!id || !bridge || typeof bridge.checkLikedSongs !== "function") {
+      if (!id && musicStatusState.liked) setMusicStatus({ liked: false }, { playing: musicStatusPlaying });
+      return;
+    }
+    const result = await bridge.checkLikedSongs([id]).catch(() => null);
+    if (result && result.success && result.liked && musicStatusState.songId === id) {
+      setMusicStatus({ liked: result.liked[id] === true }, { playing: musicStatusPlaying });
+    }
   }
 
   function ensureAudioStatusSubscription() {
@@ -490,12 +565,57 @@
           return;
         }
       }
-      setMusicStatus(audioStateStatus(state), { playing: !!state.playing });
+      const nextStatus = audioStateStatus(state);
+      const previousSongId = musicStatusState.songId;
+      const hasLikedState = Object.prototype.hasOwnProperty.call(nextStatus, "liked");
+      if (nextStatus.songId && nextStatus.songId !== previousSongId && !hasLikedState) {
+        nextStatus.liked = false;
+      }
+      setMusicStatus(nextStatus, { playing: !!state.playing });
+      if (nextStatus.songId && nextStatus.songId !== previousSongId) {
+        refreshCurrentLikedState(nextStatus.songId);
+      }
     });
   }
 
   async function runMusicStatusAction(action) {
     if (!bridge) return;
+    if (action === "toggleLike") {
+      const songId = musicStatusState.songId ? String(musicStatusState.songId) : "";
+      if (!songId || typeof bridge.likeSong !== "function") {
+        setMusicStatus("当前没有可收藏的歌曲", { playing: musicStatusPlaying });
+        return;
+      }
+      const nextLiked = !musicStatusState.liked;
+      setMusicStatus(nextLiked ? "正在加入我喜欢..." : "正在取消喜欢...", { playing: musicStatusPlaying });
+      const result = await bridge.likeSong(songId, nextLiked).catch(() => null);
+      if (result && result.success) {
+        setMusicStatus({ liked: nextLiked, status: nextLiked ? "已加入我喜欢" : "已取消喜欢" }, { playing: musicStatusPlaying });
+      } else {
+        setMusicStatus("操作失败，请先登录网易云", { playing: musicStatusPlaying });
+      }
+      return;
+    }
+    if (action === "addToPlaylist") {
+      const songId = musicStatusState.songId ? String(musicStatusState.songId) : "";
+      if (!songId) {
+        setMusicStatus("当前没有可添加的歌曲", { playing: musicStatusPlaying });
+        return;
+      }
+      const song = {
+        id: songId,
+        title: musicStatusState.title || "",
+        artist: musicStatusState.artist || "",
+      };
+      if (window.DeskpetMusicPanel && typeof window.DeskpetMusicPanel.addSongToPlaylist === "function") {
+        setMusicStatus("选择要加入的歌单", { playing: musicStatusPlaying });
+        await window.DeskpetMusicPanel.addSongToPlaylist(song).catch(() => null);
+      } else {
+        await bridge.openMusicWindow?.().catch(() => null);
+        setMusicStatus("请在音乐窗口中添加到歌单", { playing: musicStatusPlaying });
+      }
+      return;
+    }
     if (action === "openPanel" || action === "account") {
       setMusicStatus("打开面板");
       if (window.DeskpetMusicPanel && typeof window.DeskpetMusicPanel.open === "function") {
@@ -683,6 +803,24 @@
     if (clockEnabledInput) {
       clockEnabledInput.checked = clockEnabled;
     }
+    if (clockDisplayModeInput) {
+      clockDisplayModeInput.value = clockDisplayMode;
+    }
+    if (focusIndicatorEnabledInput) {
+      focusIndicatorEnabledInput.checked = focusIndicatorEnabled;
+    }
+    if (focusDisplayModeInput) {
+      focusDisplayModeInput.value = focusDisplayMode;
+    }
+    if (petClickThroughInput) {
+      petClickThroughInput.checked = petClickThroughEnabled;
+    }
+    if (musicStatusClickThroughInput) {
+      musicStatusClickThroughInput.checked = musicStatusClickThroughEnabled;
+    }
+    if (musicStatusOpacityInput) {
+      musicStatusOpacityInput.value = String(musicStatusOpacityPercent);
+    }
     if (focusDurationInput) {
       focusDurationInput.value = String(focusDurationMinutes);
     }
@@ -695,6 +833,7 @@
     setOutput(sizeOutput, sizePercent);
     setOutput(speedOutput, speedPercent);
     setOutput(opacityOutput, opacityPercent);
+    setOutput(musicStatusOpacityOutput, musicStatusOpacityPercent);
     renderFocusRecords();
     updateStatusPanel();
   }
@@ -974,6 +1113,12 @@
       mouseReactEnabled,
       dailyGreetingEnabled,
       clockEnabled,
+      clockDisplayMode,
+      focusIndicatorEnabled,
+      focusDisplayMode,
+      petClickThroughEnabled,
+      musicStatusClickThroughEnabled,
+      musicStatusOpacityPercent,
     });
   }
 
@@ -1142,6 +1287,12 @@
         mouseReactEnabled = loadedSettings.mouseReactEnabled !== false;
         dailyGreetingEnabled = loadedSettings.dailyGreetingEnabled !== false;
         clockEnabled = loadedSettings.clockEnabled !== false;
+        clockDisplayMode = normalizeWidgetDisplayMode(loadedSettings.clockDisplayMode);
+        focusIndicatorEnabled = loadedSettings.focusIndicatorEnabled !== false;
+        focusDisplayMode = normalizeWidgetDisplayMode(loadedSettings.focusDisplayMode);
+        petClickThroughEnabled = loadedSettings.petClickThroughEnabled === true;
+        musicStatusClickThroughEnabled = loadedSettings.musicStatusClickThroughEnabled === true;
+        musicStatusOpacityPercent = normalizeMusicStatusOpacity(loadedSettings.musicStatusOpacityPercent);
         focusDurationMinutes = clampFocusMinutes(loadedSettings.focusDurationMinutes, 25, 1, 180);
         breakDurationMinutes = clampFocusMinutes(loadedSettings.breakDurationMinutes, 5, 1, 60);
         pendingTaskName = typeof loadedSettings.pendingTaskName === "string"
@@ -1175,6 +1326,8 @@
           : null;
         if (musicStatusPosition) applyMusicStatusPosition();
         else clearMusicStatusPosition();
+        applyMusicStatusPresentation();
+        applyPetMouseEventsPolicy();
         applyMusicLyricStyle(loadedSettings.musicLyricStyle);
         if (window.DeskpetMusicPanel && typeof window.DeskpetMusicPanel.setPosition === "function") {
           window.DeskpetMusicPanel.setPosition(loadedSettings.musicPanelPosition || null);
@@ -1252,6 +1405,12 @@
       pendingTaskName = "";
       focusRecords = [];
       clockEnabled = true;
+      clockDisplayMode = "floating";
+      focusIndicatorEnabled = true;
+      focusDisplayMode = "floating";
+      petClickThroughEnabled = false;
+      musicStatusClickThroughEnabled = false;
+      musicStatusOpacityPercent = 100;
       animation.setSpeedMultiplier(1);
       petState.loadState({
         mood: 50,
@@ -1271,9 +1430,17 @@
         pendingTaskName: "",
         focusRecords: [],
         clockEnabled: true,
+        clockDisplayMode: "floating",
+        focusIndicatorEnabled: true,
+        focusDisplayMode: "floating",
+        petClickThroughEnabled: false,
+        musicStatusClickThroughEnabled: false,
+        musicStatusOpacityPercent: 100,
         petState: petState.snapshot(),
       };
       flushPendingSettings();
+      applyMusicStatusPresentation();
+      applyPetMouseEventsPolicy();
       syncSettingsPanel();
       return;
     }
@@ -1653,6 +1820,59 @@
     saveBehaviorSettings();
   });
 
+  clockDisplayModeInput?.addEventListener("change", () => {
+    clockDisplayMode = normalizeWidgetDisplayMode(clockDisplayModeInput.value);
+    updateClockWidget();
+    saveBehaviorSettings();
+  });
+
+  focusIndicatorEnabledInput?.addEventListener("change", () => {
+    focusIndicatorEnabled = focusIndicatorEnabledInput.checked;
+    updateFocusPanel();
+    saveBehaviorSettings();
+  });
+
+  focusDisplayModeInput?.addEventListener("change", () => {
+    focusDisplayMode = normalizeWidgetDisplayMode(focusDisplayModeInput.value);
+    updateFocusPanel();
+    saveBehaviorSettings();
+  });
+
+  petClickThroughInput?.addEventListener("change", () => {
+    petClickThroughEnabled = petClickThroughInput.checked;
+    applyPetMouseEventsPolicy();
+    refreshPetShape();
+    saveBehaviorSettings();
+  });
+
+  musicStatusClickThroughInput?.addEventListener("change", () => {
+    musicStatusClickThroughEnabled = musicStatusClickThroughInput.checked;
+    applyMusicStatusPresentation();
+    applyPetMouseEventsPolicy();
+    refreshPetShape();
+    saveBehaviorSettings();
+  });
+
+  musicStatusOpacityInput?.addEventListener("input", () => {
+    musicStatusOpacityPercent = normalizeMusicStatusOpacity(musicStatusOpacityInput.value);
+    musicStatusOpacityInput.value = String(musicStatusOpacityPercent);
+    setOutput(musicStatusOpacityOutput, musicStatusOpacityPercent);
+    applyMusicStatusPresentation();
+    saveBehaviorSettings();
+  });
+
+  document.querySelectorAll("[data-focus-task]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const task = (button.getAttribute("data-focus-task") || "").slice(0, 60);
+      pendingTaskName = task;
+      if (taskNameInput) {
+        taskNameInput.value = task;
+        taskNameInput.focus();
+      }
+      saveFocusSettings();
+    });
+  });
+
   window.addEventListener("beforeunload", () => {
     flushPendingSettings();
   });
@@ -1753,10 +1973,11 @@
   function updateFocusIndicator() {
     if (!focusIndicator) return;
     const phase = focusTimer.phase;
-    if (phase === "idle") {
+    if (!focusIndicatorEnabled || focusDisplayMode !== "floating" || phase === "idle") {
       focusIndicator.hidden = true;
       focusIndicator.className = "focus-indicator";
       focusIndicator.innerHTML = "";
+      setMusicStatus(musicStatusState, { playing: musicStatusPlaying });
       refreshPetShape();
       return;
     }
@@ -1772,6 +1993,7 @@
     focusIndicator.innerHTML = `<span class="focus-indicator__icon">${icon}</span><span class="focus-indicator__label">${label}${isPaused ? "(\u5df2\u6682\u505c)" : ""}</span><span class="focus-indicator__time">${mm}:${ss}</span>`;
     focusIndicator.hidden = false;
     if (focusIndicatorPosition) applyFocusIndicatorPosition();
+    setMusicStatus(musicStatusState, { playing: musicStatusPlaying });
     requestAnimationFrame(refreshPetShape);
   }
 

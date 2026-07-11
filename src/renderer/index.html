@@ -54,6 +54,48 @@
             </label>
           </section>
 
+          <section class="settings-section settings-section--display" aria-labelledby="display-title">
+            <h3 id="display-title" class="settings-group-title">显示组件</h3>
+            <div class="toggle-grid">
+              <label class="settings-panel__check">
+                <input id="clock-enabled-input" type="checkbox" checked />
+                <span>日期时间</span>
+              </label>
+              <label class="settings-panel__check">
+                <input id="focus-indicator-enabled-input" type="checkbox" checked />
+                <span>专注状态</span>
+              </label>
+              <label class="settings-panel__check">
+                <input id="pet-click-through-input" type="checkbox" />
+                <span>桌宠穿透</span>
+              </label>
+              <label class="settings-panel__check">
+                <input id="music-status-click-through-input" type="checkbox" />
+                <span>歌词栏穿透</span>
+              </label>
+            </div>
+            <label class="field-row">
+              <span>时间显示</span>
+              <select id="clock-display-mode-input">
+                <option value="floating">单独显示</option>
+                <option value="music">歌词栏</option>
+                <option value="hidden">隐藏</option>
+              </select>
+            </label>
+            <label class="field-row">
+              <span>专注显示</span>
+              <select id="focus-display-mode-input">
+                <option value="floating">单独显示</option>
+                <option value="music">歌词栏</option>
+                <option value="hidden">隐藏</option>
+              </select>
+            </label>
+            <label class="field-row field-row--range">
+              <span>歌词栏透明度 <output id="music-status-opacity-output">100%</output></span>
+              <input id="music-status-opacity-input" type="range" min="20" max="100" step="1" value="100" />
+            </label>
+          </section>
+
           <section class="settings-section settings-section--automation" aria-labelledby="automation-title">
             <h3 id="automation-title" class="settings-group-title">自动化</h3>
             <div class="toggle-grid">
@@ -72,10 +114,6 @@
               <label class="settings-panel__check">
                 <input id="daily-greeting-input" type="checkbox" checked />
                 <span>每日问候</span>
-              </label>
-              <label class="settings-panel__check">
-                <input id="clock-enabled-input" type="checkbox" checked />
-                <span>日期时间</span>
               </label>
             </div>
           </section>
@@ -96,6 +134,12 @@
               <span>任务名称</span>
               <input id="task-name-input" type="text" maxlength="60" placeholder="如：写文档" />
             </label>
+            <div class="focus-task-presets" aria-label="快速任务名称">
+              <button type="button" data-focus-task="学习">学习</button>
+              <button type="button" data-focus-task="写代码">写代码</button>
+              <button type="button" data-focus-task="写文档">写文档</button>
+              <button type="button" data-focus-task="阅读">阅读</button>
+            </div>
             <dl class="settings-status-strip settings-status-strip--focus">
               <div class="status-pill"><dt>状态</dt><dd id="focus-phase">空闲</dd></div>
               <div class="status-pill"><dt>剩余</dt><dd id="focus-remaining">25:00</dd></div>

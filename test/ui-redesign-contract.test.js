@@ -57,13 +57,28 @@ test("renderer markup exposes compact settings structure without changing contro
   for (const id of [
     "size-input", "speed-input", "opacity-input", "auto-behavior-input", "auto-walk-input",
     "mouse-react-input", "daily-greeting-input", "clock-enabled-input", "focus-start", "focus-reset",
+    "clock-display-mode-input", "focus-indicator-enabled-input", "focus-display-mode-input",
   ]) {
     assert.match(html, new RegExp(`id="${id}"`), `${id} should remain available to renderer.js`);
   }
 });
 
+test("focus settings expose quick task naming and widget display placement controls", () => {
+  const html = fs.readFileSync(path.join(root, "src", "renderer", "index.html"), "utf8");
+
+  assert.match(html, /class="focus-task-presets"/);
+  assert.match(html, /data-focus-task="学习"/);
+  assert.match(html, /data-focus-task="写代码"/);
+  assert.match(html, /id="clock-display-mode-input"/);
+  assert.match(html, /id="focus-indicator-enabled-input"/);
+  assert.match(html, /id="focus-display-mode-input"/);
+  assert.match(html, /value="music"[^>]*>歌词栏/);
+});
+
 test("glass UI stylesheet defines theme variables and preserves pointer event semantics", () => {
   const css = fs.readFileSync(path.join(root, "src", "renderer", "styles.css"), "utf8");
+  const preload = fs.readFileSync(path.join(root, "src", "preload.js"), "utf8");
+  const main = fs.readFileSync(path.join(root, "src", "main.js"), "utf8");
   assert.match(css, /:root\s*{/);
   assert.match(css, /--glass-bg:/);
   assert.match(css, /--glass-border:/);
@@ -88,6 +103,13 @@ test("glass UI stylesheet defines theme variables and preserves pointer event se
   assert.match(renderer, /function refreshPetShape\(\)/);
   assert.match(renderer, /bridge\.setPetShape\(rects\)/);
   assert.match(renderer, /pet-top-right/);
+  assert.match(renderer, /addVisibleUiShapeRect\(rects, musicStatusBar\)/);
+  assert.doesNotMatch(renderer, /imageData && pet && !petClickThroughEnabled/);
+  assert.match(renderer, /function applyPetMouseEventsPolicy\(\)/);
+  assert.match(renderer, /setPetMouseEventsIgnored\(ignored\)/);
+  assert.match(preload, /setPetMouseEventsIgnored/);
+  assert.match(main, /pet:set-mouse-events-ignored/);
+  assert.match(main, /setIgnoreMouseEvents\(ignored === true,\s*\{\s*forward:\s*true\s*\}\)/);
 
   // mood-bubble restyle: smaller font, rounded-rectangle (not pill), gradient background
   const bubbleRuleMatch = css.match(/\.mood-bubble\s*{([^}]*)}/);

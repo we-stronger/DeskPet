@@ -461,6 +461,13 @@ async function checkLikedSongs(songIds, { cookie, request } = {}) {
     if (res.json && res.json.code === 200 && data && typeof data === "object") {
       return { success: true, liked: data };
     }
+    if (res.json && res.json.code === 200 && Array.isArray(res.json.ids)) {
+      const likedIds = new Set(res.json.ids.map((id) => String(id)));
+      return {
+        success: true,
+        liked: Object.fromEntries(ids.map((id) => [id, likedIds.has(id)])),
+      };
+    }
     return { success: false, error: mapApiError(res.json, "checkLikedSongs"), liked: {} };
   } catch (error) {
     return { success: false, error: (error && error.message) || "network-error", liked: {} };

@@ -220,6 +220,7 @@ function buildContextMenuTemplate({
 function buildTrayMenuTemplate({ petState, sendCommand, resetPosition, quit }) {
   const template = [
     { label: "👀 显示桌宠", click: () => sendCommand("show") },
+    { label: "⚙ 设置", click: () => sendCommand("settings") },
     { label: "↔ 重置尺寸", click: () => sendCommand("size:100") },
     { label: "⏱ 重置速度", click: () => sendCommand("speed:100") },
     { label: "📍 重置位置", click: resetPosition },

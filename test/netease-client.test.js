@@ -522,6 +522,20 @@ test("checkLikedSongs returns liked state by song id", async () => {
   assert.match(decodeURIComponent(calls[0].body), /trackIds=\["42","43"\]/);
 });
 
+test("checkLikedSongs accepts ids-array response shape", async () => {
+  const { fn } = fakeRequest([
+    fakeResponse({ body: { code: 200, ids: [42] } }),
+  ]);
+
+  const result = await client.checkLikedSongs([42, 43], {
+    cookie: "MUSIC_U=abc",
+    request: fn,
+  });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(result.liked, { 42: true, 43: false });
+});
+
 test("getIntelligenceList returns normalized songs from the official playmode endpoint", async () => {
   const { fn, calls } = fakeRequest([
     fakeResponse({

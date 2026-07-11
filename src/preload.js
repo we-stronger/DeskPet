@@ -10,6 +10,9 @@ contextBridge.exposeInMainWorld("deskpet", {
   setPetShape(rect) {
     return ipcRenderer.invoke("pet:set-shape", { rect: rect || null });
   },
+  setPetMouseEventsIgnored(ignored) {
+    return ipcRenderer.invoke("pet:set-mouse-events-ignored", { ignored: ignored === true });
+  },
   showMenu() {
     return ipcRenderer.invoke("pet:show-menu");
   },

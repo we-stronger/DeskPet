@@ -60,6 +60,42 @@
           <input id="settings-break-min" type="number" min="1" max="60" />
           <p class="settings-window__help">休息阶段时长，1–60 分钟。</p>
         </div>
+        <div class="settings-window__field">
+          <label class="settings-window__label" for="settings-clock-display-mode">日期时间显示</label>
+          <select id="settings-clock-display-mode">
+            <option value="floating">单独显示</option>
+            <option value="music">放在歌词栏</option>
+            <option value="hidden">隐藏</option>
+          </select>
+        </div>
+        <div class="settings-window__field">
+          <label class="settings-window__label" for="settings-focus-display-mode">专注状态显示</label>
+          <select id="settings-focus-display-mode">
+            <option value="floating">单独显示</option>
+            <option value="music">放在歌词栏</option>
+            <option value="hidden">隐藏</option>
+          </select>
+        </div>
+        <label class="settings-window__check">
+          <input id="settings-clock-enabled" type="checkbox" />
+          <span>显示日期时间模块</span>
+        </label>
+        <label class="settings-window__check">
+          <input id="settings-focus-indicator-enabled" type="checkbox" />
+          <span>显示专注状态模块</span>
+        </label>
+        <label class="settings-window__check">
+          <input id="settings-pet-click-through" type="checkbox" />
+          <span>桌宠鼠标穿透</span>
+        </label>
+        <label class="settings-window__check">
+          <input id="settings-music-status-click-through" type="checkbox" />
+          <span>歌词栏鼠标穿透（仍显示并保持置顶）</span>
+        </label>
+        <div class="settings-window__field">
+          <label class="settings-window__label" for="settings-music-status-opacity">歌词栏透明度 <span id="settings-music-status-opacity-value">100%</span></label>
+          <input id="settings-music-status-opacity" type="range" min="20" max="100" step="1" />
+        </div>
       </section>
       <section class="settings-window__panel" data-panel="llm" role="tabpanel" hidden>
         <div class="settings-window__field">
@@ -72,12 +108,13 @@
         </div>
         <div class="settings-window__field">
           <label class="settings-window__label" for="settings-llm-model">模型</label>
-          <select id="settings-llm-model">
+          <input id="settings-llm-model" type="text" autocomplete="off" list="settings-llm-model-suggestions" placeholder="glm-4-flash / qwen-plus / gpt-4o-mini" />
+          <datalist id="settings-llm-model-suggestions">
             <option value="glm-4-flash">glm-4-flash（免费，速度快，推荐）</option>
             <option value="glm-4-air">glm-4-air</option>
             <option value="glm-4">glm-4</option>
             <option value="glm-4-plus">glm-4-plus（更强、更贵）</option>
-          </select>
+          </datalist>
         </div>
         <div class="settings-window__field">
           <label class="settings-window__label" for="settings-llm-endpoint">API 地址</label>

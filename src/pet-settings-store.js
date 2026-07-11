@@ -30,6 +30,12 @@ const defaultPetSettings = Object.freeze({
   pendingTaskName: "",
   focusRecords: Object.freeze([]),
   clockEnabled: true,
+  clockDisplayMode: "floating",
+  focusIndicatorEnabled: true,
+  focusDisplayMode: "floating",
+  petClickThroughEnabled: false,
+  musicStatusClickThroughEnabled: false,
+  musicStatusOpacityPercent: 100,
   // User-saved top-left position (CSS pixels relative to the pet's
   // #stage) of the in-pet music panel. null = use the built-in default
   // (top-right of the stage). Persisted across restarts so the user
@@ -82,6 +88,14 @@ function normalizeOpacityPercent(value) {
   return Math.round(percent);
 }
 
+function normalizeMusicStatusOpacityPercent(value) {
+  const percent = Number(value);
+  if (!Number.isFinite(percent) || percent < 20 || percent > 100) {
+    return defaultPetSettings.musicStatusOpacityPercent;
+  }
+  return Math.round(percent);
+}
+
 function normalizePosition(position) {
   if (!position || typeof position !== "object") {
     return null;
@@ -106,14 +120,11 @@ function normalizeLlmSettings(llm) {
   if (!llm || typeof llm !== "object") {
     return { ...defaults };
   }
-  const allowedModels = new Set(["glm-4-flash", "glm-4-air", "glm-4", "glm-4-plus"]);
-  const rawModel = typeof llm.model === "string" && llm.model.trim()
-    ? llm.model.trim()
-    : defaults.model;
-  const model = allowedModels.has(rawModel) ? rawModel : defaults.model;
   return {
     apiKey: typeof llm.apiKey === "string" ? llm.apiKey : defaults.apiKey,
-    model,
+    model: typeof llm.model === "string" && llm.model.trim()
+      ? llm.model.trim()
+      : defaults.model,
     endpoint: typeof llm.endpoint === "string" && llm.endpoint.trim()
       ? llm.endpoint.trim()
       : defaults.endpoint,
@@ -193,6 +204,10 @@ function normalizeFocusRecords(records) {
   return normalized.slice(-FOCUS_RECORD_MAX);
 }
 
+function normalizeWidgetDisplayMode(value) {
+  return value === "music" || value === "hidden" ? value : "floating";
+}
+
 function normalizePetState(state = {}) {
   if (!state || typeof state !== "object") {
     return {
@@ -259,6 +274,18 @@ function normalizePetSettings(settings = {}) {
     clockEnabled: typeof settings.clockEnabled === "boolean"
       ? settings.clockEnabled
       : defaultPetSettings.clockEnabled,
+    clockDisplayMode: normalizeWidgetDisplayMode(settings.clockDisplayMode),
+    focusIndicatorEnabled: typeof settings.focusIndicatorEnabled === "boolean"
+      ? settings.focusIndicatorEnabled
+      : defaultPetSettings.focusIndicatorEnabled,
+    focusDisplayMode: normalizeWidgetDisplayMode(settings.focusDisplayMode),
+    petClickThroughEnabled: typeof settings.petClickThroughEnabled === "boolean"
+      ? settings.petClickThroughEnabled
+      : defaultPetSettings.petClickThroughEnabled,
+    musicStatusClickThroughEnabled: typeof settings.musicStatusClickThroughEnabled === "boolean"
+      ? settings.musicStatusClickThroughEnabled
+      : defaultPetSettings.musicStatusClickThroughEnabled,
+    musicStatusOpacityPercent: normalizeMusicStatusOpacityPercent(settings.musicStatusOpacityPercent),
     musicPanelPosition: normalizeWidgetPosition(settings.musicPanelPosition),
     clockPosition: normalizeWidgetPosition(settings.clockPosition),
     focusIndicatorPosition: normalizeWidgetPosition(settings.focusIndicatorPosition),

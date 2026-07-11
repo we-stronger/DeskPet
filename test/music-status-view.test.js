@@ -11,12 +11,42 @@ test("renderMusicStatusBar includes playback, panel, and app controls", () => {
   assert.match(html, /data-music-action="previous"/);
   assert.match(html, /data-music-action="playPause"/);
   assert.match(html, /data-music-action="next"/);
+  assert.match(html, /data-music-action="toggleLike"/);
+  assert.match(html, /data-music-action="addToPlaylist"/);
   assert.match(html, /data-music-action="openPanel"/);
   assert.match(html, /data-music-action="account"/);
   assert.match(html, /data-music-action="openNetease"/);
   assert.match(html, /NetEase Music/);
   assert.match(html, /Paused/);
   assert.match(html, /❧|🍃/);
+});
+
+test("renderMusicStatusBar separates liked song control from heartbeat play mode", () => {
+  const html = renderMusicStatusBar({
+    title: "Song",
+    status: "Playing",
+    playMode: "heartbeat",
+    liked: true,
+  });
+
+  assert.match(html, /data-music-action="toggleLike"/);
+  assert.match(html, /aria-pressed="true"/);
+  assert.match(html, /data-music-action="cycleMode"[\s\S]*&#9829;/);
+  assert.match(html, /data-music-action="toggleLike"[\s\S]*&#10084;/);
+  assert.match(html, /class="music-status-bar__like-mark"/);
+});
+
+test("renderMusicStatusBar can embed clock and focus summaries", () => {
+  const html = renderMusicStatusBar({
+    title: "Song",
+    status: "Playing",
+    clockSummary: "07/11 周六 14:20",
+    focusSummary: "专注 12:34 · 写代码",
+  });
+
+  assert.match(html, /class="music-status-bar__widgets"/);
+  assert.match(html, /07\/11/);
+  assert.match(html, /专注 12:34/);
 });
 
 test("renderMusicStatusBar disables adjacent controls when the queue is unavailable", () => {
@@ -77,4 +107,6 @@ test("music status CSS exposes decorative lyric controls styling", () => {
   assert.match(css, /var\(--music-lyric-size/);
   assert.match(css, /var\(--music-control-size/);
   assert.match(css, /\.music-status-bar__button:disabled/);
+  assert.match(css, /\.music-status-bar__widgets/);
+  assert.match(css, /data-music-action="toggleLike"/);
 });

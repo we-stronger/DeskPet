@@ -129,6 +129,19 @@ test("focus submenu exposes timer summary and start/pause/reset commands", () =>
   ]);
 });
 
+test("focus submenu keeps configuration out of the records entry", () => {
+  const template = buildContextMenuTemplate({
+    petState: { mood: 50, affinity: 0, energy: 80, sleeping: false },
+    sendCommand: () => {},
+    quit: () => {},
+  });
+
+  const focusLabels = labels(submenu(template, "⏱ 专注"));
+  assert.ok(focusLabels.includes("📋 查看专注记录"));
+  assert.ok(!focusLabels.includes("⚙ 专注设置"));
+  assert.ok(!focusLabels.includes("显示设置"));
+});
+
 test("focus submenu reflects the pending task name and today's record count", () => {
   // Use local noon today so the ISO date portion matches the local-date
   // key used by todayFocusSummary, regardless of UTC offset.
@@ -210,6 +223,7 @@ test("tray menu exposes compact recovery commands", () => {
   assert.deepEqual(labels(template), [
     "状态：睡眠中 / 精力 0",
     "👀 显示桌宠",
+    "⚙ 设置",
     "↔ 重置尺寸",
     "⏱ 重置速度",
     "📍 重置位置",
@@ -218,8 +232,9 @@ test("tray menu exposes compact recovery commands", () => {
   ]);
 
   template.find((item) => item.label === "↔ 重置尺寸").click();
+  template.find((item) => item.label === "⚙ 设置").click();
   template.find((item) => item.label === "📍 重置位置").click();
-  assert.deepEqual(commands, ["size:100", "reset-position"]);
+  assert.deepEqual(commands, ["size:100", "settings", "reset-position"]);
 });
 
 test("music submenu exposes in-app music commands without opening the NetEase client", () => {

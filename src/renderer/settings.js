@@ -212,18 +212,74 @@
 
   const applyFocusMin = bindNumber("settings-focus-min", "focusDurationMinutes", 1, 180, 25);
   const applyBreakMin = bindNumber("settings-break-min", "breakDurationMinutes", 1, 60, 5);
+  const clockDisplayModeInput = document.getElementById("settings-clock-display-mode");
+  const focusDisplayModeInput = document.getElementById("settings-focus-display-mode");
+  const clockEnabledInput = document.getElementById("settings-clock-enabled");
+  const focusIndicatorEnabledInput = document.getElementById("settings-focus-indicator-enabled");
+  const petClickThroughInput = document.getElementById("settings-pet-click-through");
+  const musicStatusClickThroughInput = document.getElementById("settings-music-status-click-through");
+  const musicStatusOpacityInput = document.getElementById("settings-music-status-opacity");
+  const musicStatusOpacityValue = document.getElementById("settings-music-status-opacity-value");
+
+  function normalizeWidgetDisplayMode(value) {
+    return value === "music" || value === "hidden" ? value : "floating";
+  }
+
+  function bindSelect(input, key, normalize) {
+    if (!input) return;
+    input.addEventListener("change", async () => {
+      const value = normalize(input.value);
+      input.value = value;
+      setStatus("正在保存…", "info");
+      await saveSettings({ [key]: value });
+      setStatus("已保存", "success");
+    });
+  }
+
+  function bindCheckbox(input, key) {
+    if (!input) return;
+    input.addEventListener("change", async () => {
+      setStatus("正在保存…", "info");
+      await saveSettings({ [key]: input.checked });
+      setStatus("已保存", "success");
+    });
+  }
+
+  bindSelect(clockDisplayModeInput, "clockDisplayMode", normalizeWidgetDisplayMode);
+  bindSelect(focusDisplayModeInput, "focusDisplayMode", normalizeWidgetDisplayMode);
+  bindCheckbox(clockEnabledInput, "clockEnabled");
+  bindCheckbox(focusIndicatorEnabledInput, "focusIndicatorEnabled");
+  bindCheckbox(petClickThroughInput, "petClickThroughEnabled");
+  bindCheckbox(musicStatusClickThroughInput, "musicStatusClickThroughEnabled");
+
+  if (musicStatusOpacityInput) {
+    const applyMusicStatusOpacity = (raw) => {
+      const value = clampInt(raw, 100, 20, 100);
+      musicStatusOpacityInput.value = String(value);
+      if (musicStatusOpacityValue) musicStatusOpacityValue.textContent = `${value}%`;
+      return value;
+    };
+    musicStatusOpacityInput.addEventListener("input", () => {
+      applyMusicStatusOpacity(musicStatusOpacityInput.value);
+    });
+    musicStatusOpacityInput.addEventListener("change", async () => {
+      const value = applyMusicStatusOpacity(musicStatusOpacityInput.value);
+      setStatus("正在保存…", "info");
+      await saveSettings({ musicStatusOpacityPercent: value });
+      setStatus("已保存", "success");
+    });
+  }
 
   // ---- AI tab ---------------------------------------------------------
 
   const apiKeyInput = document.getElementById("settings-llm-apikey");
   const apiKeyToggle = document.getElementById("settings-llm-apikey-toggle");
-  const modelSelect = document.getElementById("settings-llm-model");
+  const modelInput = document.getElementById("settings-llm-model");
   const endpointInput = document.getElementById("settings-llm-endpoint");
   const promptInput = document.getElementById("settings-llm-prompt");
   const promptReset = document.getElementById("settings-llm-prompt-reset");
   const saveLlmButton = document.getElementById("settings-llm-save");
 
-  const ALLOWED_MODELS = ["glm-4-flash", "glm-4-air", "glm-4", "glm-4-plus"];
   const DEFAULT_LLM = {
     apiKey: "",
     model: "glm-4-flash",
@@ -245,7 +301,7 @@
 
   if (saveLlmButton) {
     saveLlmButton.addEventListener("click", async () => {
-      const model = ALLOWED_MODELS.includes(modelSelect.value) ? modelSelect.value : DEFAULT_LLM.model;
+      const model = (modelInput && modelInput.value ? modelInput.value : "").trim() || DEFAULT_LLM.model;
       const endpoint = (endpointInput.value || "").trim() || DEFAULT_LLM.endpoint;
       const systemPrompt = promptInput.value || "";
       // API key: trim, but preserve empty so the user can intentionally
@@ -282,9 +338,20 @@
     if (controlSizeValue) controlSizeValue.textContent = `${controlSize}px`;
     if (applyFocusMin) applyFocusMin(settings.focusDurationMinutes);
     if (applyBreakMin) applyBreakMin(settings.breakDurationMinutes);
+    if (clockDisplayModeInput) clockDisplayModeInput.value = normalizeWidgetDisplayMode(settings.clockDisplayMode);
+    if (focusDisplayModeInput) focusDisplayModeInput.value = normalizeWidgetDisplayMode(settings.focusDisplayMode);
+    if (clockEnabledInput) clockEnabledInput.checked = settings.clockEnabled !== false;
+    if (focusIndicatorEnabledInput) focusIndicatorEnabledInput.checked = settings.focusIndicatorEnabled !== false;
+    if (petClickThroughInput) petClickThroughInput.checked = settings.petClickThroughEnabled === true;
+    if (musicStatusClickThroughInput) musicStatusClickThroughInput.checked = settings.musicStatusClickThroughEnabled === true;
+    if (musicStatusOpacityInput) {
+      const opacity = clampInt(settings.musicStatusOpacityPercent, 100, 20, 100);
+      musicStatusOpacityInput.value = String(opacity);
+      if (musicStatusOpacityValue) musicStatusOpacityValue.textContent = `${opacity}%`;
+    }
 
     const llm = settings.llm || DEFAULT_LLM;
-    if (modelSelect) modelSelect.value = ALLOWED_MODELS.includes(llm.model) ? llm.model : DEFAULT_LLM.model;
+    if (modelInput) modelInput.value = llm.model || DEFAULT_LLM.model;
     if (endpointInput) endpointInput.value = llm.endpoint || DEFAULT_LLM.endpoint;
     if (promptInput) promptInput.value = llm.systemPrompt || "";
     if (apiKeyInput) {

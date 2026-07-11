@@ -10,6 +10,7 @@
   let currentView = "home";
   let currentPlaylistId = "";
   let currentPlaylistName = "";
+  let currentPlaylistIsLiked = false;
   let pendingAddSong = null;
   let qrPollTimer = 0;
 
@@ -122,6 +123,7 @@
       title: item.querySelector("strong")?.textContent?.trim() || "",
       artist: artistFromSongRow(item),
       playlistId: currentPlaylistId,
+      liked: item.querySelector(".music-panel-like-song")?.getAttribute("aria-pressed") === "true" || /喜欢/.test(currentPlaylistName || ""),
     })).filter((item) => item.id);
   }
 
@@ -324,10 +326,12 @@
   function songFromActionButton(button) {
     const id = button && button.getAttribute("data-song-id");
     const row = button && button.closest(".music-panel-song");
+    const likeButton = row?.querySelector(".music-panel-like-song[data-song-id]");
     return {
       id,
       title: row?.querySelector("strong")?.textContent?.trim() || "",
       artist: artistFromSongRow(row),
+      liked: likeButton?.getAttribute("aria-pressed") === "true" || currentPlaylistIsLiked,
     };
   }
 
@@ -461,14 +465,15 @@
         const id = button.getAttribute("data-song-id");
         if (!id) return;
         const row = button.closest(".music-panel-song");
-        const title = row?.querySelector("strong")?.textContent?.trim() || "";
-        const artist = (row?.querySelector("span")?.textContent || "").split("路")[0].trim();
+        const song = songFromActionButton(button);
+        const title = song.title;
+        const artist = song.artist;
         const result = await root.DeskpetMusicPlaybackService.playSongWithFallback(id, {
           bridge,
           audioPlayer: root.DeskpetAudioPlayer,
           queue: queueFromCurrentSongList(),
           playlistId: currentPlaylistId,
-          meta: { title, artist },
+          meta: { title, artist, liked: song.liked === true },
           setStatus,
           logger: root.console,
         });
@@ -513,7 +518,7 @@
       queue,
       mode: normalizedMode,
       playlistId: currentPlaylistId,
-      meta: { title: first.title, artist: first.artist },
+      meta: { title: first.title, artist: first.artist, liked: first.liked === true },
       setStatus,
       logger: root.console,
     });
@@ -541,7 +546,7 @@
       queue: kind === "queue" ? state.queue : undefined,
       mode: state.mode,
       playlistId: item.playlistId,
-      meta: { title: item.title, artist: item.artist },
+      meta: { title: item.title, artist: item.artist, liked: item.liked === true },
       setStatus,
       logger: root.console,
     });
@@ -556,6 +561,7 @@
   async function showPlaybackQueue() {
     currentPlaylistId = "";
     currentPlaylistName = "";
+    currentPlaylistIsLiked = false;
     const service = root.DeskpetMusicPlaybackService;
     const state = service ? await service.syncPlaybackState(bridge) : { queue: [], currentIndex: -1 };
     setStatus(state.queue.length ? `队列中有 ${state.queue.length} 首歌曲。` : "播放队列为空。", state.queue.length ? "ok" : "empty");
@@ -565,6 +571,7 @@
   async function showPlaybackHistory() {
     currentPlaylistId = "";
     currentPlaylistName = "";
+    currentPlaylistIsLiked = false;
     const service = root.DeskpetMusicPlaybackService;
     const state = service ? await service.syncPlaybackState(bridge) : { history: [] };
     const history = state.history || [];
@@ -658,6 +665,7 @@
     currentView = "search";
     currentPlaylistId = "";
     currentPlaylistName = "";
+    currentPlaylistIsLiked = false;
     setStatus("我帮你找找。", "info");
     const result = await bridge.searchMusic(keyword, 20).catch(() => null);
     if (!result || !result.success) {
@@ -675,6 +683,7 @@
     currentView = "playlists";
     currentPlaylistId = "";
     currentPlaylistName = "";
+    currentPlaylistIsLiked = false;
     setStatus("正在获取歌单...", "info");
     setContent('<div class="music-panel-loading">加载歌单中...</div>');
     const result = await bridge.getUserPlaylists().catch((err) => {
@@ -699,6 +708,7 @@
   async function showPlaylistDetail(playlistId) {
     if (!playlistId) return;
     currentPlaylistId = String(playlistId);
+    currentPlaylistIsLiked = false;
     setStatus("正在获取歌单歌曲...", "info");
     setContent('<div class="music-panel-loading">加载歌单详情...</div>');
     const result = await bridge.getPlaylistDetail(playlistId).catch(() => null);
@@ -709,6 +719,7 @@
       return;
     }
     currentPlaylistName = result.playlist?.name || "";
+    currentPlaylistIsLiked = result.playlist?.specialType === 5 || /喜欢/.test(currentPlaylistName || "");
     setStatus("想听哪一首？", "ok");
     setContent(playlistView.renderPlaylistDetail(result));
     bubble("想听哪一首？");
@@ -773,5 +784,13 @@
     notifyShapeChanged();
   }
 
-  root.DeskpetMusicPanel = { open, close, notifyLoginFailed, setPosition };
+  async function addSongToPlaylist(song) {
+    ensurePanel();
+    panel.hidden = false;
+    currentView = "playlists";
+    await refreshProfile();
+    return showAddToPlaylistChooser(song);
+  }
+
+  root.DeskpetMusicPanel = { open, close, notifyLoginFailed, setPosition, addSongToPlaylist };
 })(typeof window !== "undefined" ? window : globalThis);

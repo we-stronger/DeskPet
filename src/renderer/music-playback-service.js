@@ -30,6 +30,7 @@
       title: typeof item.title === "string" ? item.title : "",
       artist: typeof item.artist === "string" ? item.artist : "",
       playlistId: item.playlistId == null ? "" : String(item.playlistId),
+      liked: item.liked === true,
     };
   }
 
@@ -44,6 +45,7 @@
       title: item.title || "",
       artist: item.artist || "",
       playlistId: item.playlistId || "",
+      liked: item.liked === true,
     };
     if (item.playedAt) cloned.playedAt = item.playedAt;
     return cloned;
@@ -57,6 +59,7 @@
       title: meta.title || (fromQueue && fromQueue.title) || "",
       artist: meta.artist || (fromQueue && fromQueue.artist) || "",
       playlistId: (fromQueue && fromQueue.playlistId) || "",
+      liked: meta.liked === true || (fromQueue && fromQueue.liked === true),
     });
     if (!item) return;
     item.playedAt = new Date(nowMs(deps)).toISOString();
@@ -156,6 +159,7 @@
     return {
       title: item.title || "",
       artist: item.artist || "",
+      liked: item.liked === true,
     };
   }
 
@@ -177,6 +181,13 @@
       return picked === currentQueueIndex ? (picked + 1) % currentQueue.length : picked;
     }
     return (currentQueueIndex + offset + currentQueue.length) % currentQueue.length;
+  }
+
+  function previousHistoryIndex() {
+    if (!currentQueue.length || history.length < 2) return -1;
+    const previous = history[1];
+    if (!previous || !isValidSongId(previous.id)) return -1;
+    return currentQueue.findIndex((item) => item.id === String(previous.id));
   }
 
   function shouldUseAudioFallback(result) {
@@ -306,6 +317,7 @@
       title: song.name || song.title || "",
       artist,
       playlistId,
+      liked: song.liked === true,
     });
   }
 
@@ -346,7 +358,10 @@
       const intelligenceResult = await playIntelligenceNext(deps);
       if (intelligenceResult) return intelligenceResult;
     }
-    const nextIndex = adjacentIndex(offset, deps);
+    const historyIndex = offset < 0 && (playMode === "shuffle" || playMode === "heartbeat")
+      ? previousHistoryIndex()
+      : -1;
+    const nextIndex = historyIndex >= 0 ? historyIndex : adjacentIndex(offset, deps);
     const next = currentQueue[nextIndex];
     if (!next) {
       return { success: false, error: "no-queue" };
