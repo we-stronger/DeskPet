@@ -11,6 +11,8 @@ const checkedFiles = [
   "src/renderer/music.js",
   "src/renderer/music-search-view.js",
   "src/renderer/music-playlist-view.js",
+  "src/renderer/settings.html",
+  "src/renderer/settings.js",
   "src/music/netease-client.js",
   "src/media-control.js",
   "test/music-views.test.js",
@@ -26,6 +28,10 @@ const mojibakeMarkers = [
   "鈫",
   "馃",
   "鉁",
+  "鎵撳紑",
+  "淇濆瓨",
+  "璇诲彇",
+  "鎴愬姛",
 ];
 
 test("selected source files do not contain known Chinese mojibake markers", () => {

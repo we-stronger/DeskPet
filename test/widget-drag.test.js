@@ -86,8 +86,10 @@ test("click (sub-threshold movement) does not fire onEnd so button clicks still 
   const fakeWindow = makeFakeWindow();
   const { widget, handlers } = makeWidget();
   let onEndCalls = 0;
+  let onStartCalls = 0;
   attachWidgetDrag(widget, {
     win: fakeWindow,
+    onStart: () => { onStartCalls += 1; },
     onEnd: () => { onEndCalls += 1; },
   });
 
@@ -98,7 +100,23 @@ test("click (sub-threshold movement) does not fire onEnd so button clicks still 
   let prevented = false;
   fire(fakeWindow.handlers, "pointerup", { pointerId: 7, preventDefault() { prevented = true; }, stopPropagation() {} });
   assert.equal(onEndCalls, 0);
+  assert.equal(onStartCalls, 0);
   assert.equal(prevented, false);
+});
+
+test("drag helper starts only after the pointer crosses the drag threshold", () => {
+  const fakeWindow = makeFakeWindow();
+  const { widget, handlers } = makeWidget();
+  let onStartCalls = 0;
+  attachWidgetDrag(widget, {
+    win: fakeWindow,
+    onStart: () => { onStartCalls += 1; },
+  });
+
+  fire(handlers, "pointerdown", { button: 0, pointerId: 8, clientX: 50, clientY: 50, stopPropagation() {} });
+  assert.equal(onStartCalls, 0);
+  fire(fakeWindow.handlers, "pointermove", { pointerId: 8, clientX: 56, clientY: 50 });
+  assert.equal(onStartCalls, 1);
 });
 
 test("ignores right-clicks so no window listeners are installed", () => {

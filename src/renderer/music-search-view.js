@@ -33,6 +33,13 @@
       const id = escapeHtml(item.id);
       const title = escapeHtml(item.title || "未命名歌曲");
       const artist = escapeHtml(item.artist || "未知歌手");
+      const source = escapeHtml(item.source || (item.playlistId ? "歌单播放" : "搜索播放"));
+      const playedAt = item.playedAt
+        ? escapeHtml(new Date(item.playedAt).toLocaleString("zh-CN", { hour12: false }))
+        : "";
+      const unavailable = item.playable === false
+        ? `<span class="music-playback-unavailable">暂不可用${item.error ? `：${escapeHtml(item.error)}` : ""}</span>`
+        : "";
       const isCurrent = kind === "queue" && index === currentIndex;
       const isNext = kind === "queue" && index === currentIndex + 1;
       const stateClass = isCurrent ? " is-current" : (isNext ? " is-next" : "");
@@ -46,7 +53,7 @@
         <div class="music-playback-row__index">${index + 1}</div>
         <div class="music-playback-row__main">
           <div><strong>${title}</strong>${marker}</div>
-          <span>${artist}</span>
+          <span>${artist} · ${source}${playedAt ? ` · ${playedAt}` : ""}${unavailable}</span>
         </div>
         <div class="music-playback-row__actions">
           <button type="button" class="music-playback-play" data-song-id="${id}" title="播放" aria-label="播放">▶</button>
@@ -71,7 +78,8 @@
       const album = escapeHtml(song.album || "未知专辑");
       const duration = escapeHtml(formatDuration(song.duration));
       const playable = song.playable === false ? "受限" : "可打开";
-      return `<li class="music-panel-song" data-song-id="${id}">
+      const coverUrl = typeof song.coverUrl === "string" && /^https?:\/\//i.test(song.coverUrl) ? escapeHtml(song.coverUrl) : "";
+      return `<li class="music-panel-song" data-song-id="${id}"${coverUrl ? ` data-cover-url="${coverUrl}"` : ""}>
         <div class="music-panel-song__main">
           <strong>${title}</strong>
           <span>${artists} · ${album} · ${duration} · ${playable}</span>

@@ -1,4 +1,16 @@
-const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, session, shell } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Menu,
+  Notification,
+  Tray,
+  nativeImage,
+  powerMonitor,
+  screen,
+  session,
+  shell,
+} = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
@@ -45,6 +57,10 @@ const { chat: llmChat } = require("./llm-client");
 const { buildNeteaseMediaHeaders } = require("./netease-media-headers");
 const { createNeteaseAudioProxy } = require("./netease-audio-proxy");
 const { buildNeteaseSongPageUrl, buildNeteaseWebPlayScript } = require("./netease-web-player");
+const { createWindowManager } = require("./main/window-manager");
+const { createTrayMenuRuntime } = require("./main/menu-runtime");
+const { registerSettingsIpc } = require("./main/ipc/settings-ipc");
+const { registerFocusSystem } = require("./main/focus-system");
 // loadEnvConfig is intentionally not wired into packaged builds —
 // end users configure LLM credentials through the in-app settings
 // window (see openSettingsWindow below) which writes to
@@ -55,7 +71,6 @@ const { buildNeteaseSongPageUrl, buildNeteaseWebPlayScript } = require("./neteas
 // Common Windows install paths for NetEase Cloud Music. Best-effort fallback
 // after the `orpheus://` URI scheme fails.
 const NETEASE_CANDIDATE_PATHS = [
-  "D:\\SOFT\\CloudMusic\\cloudmusic.exe",
   "C:\\Program Files\\NetEase\\CloudMusic\\cloudmusic.exe",
   "C:\\Program Files (x86)\\NetEase\\CloudMusic\\cloudmusic.exe",
   path.join(process.env.LOCALAPPDATA || "", "NetEase\\CloudMusic\\cloudmusic.exe"),
@@ -65,6 +80,8 @@ let petWindow;
 let musicSearchWindow;
 let chatWindow;
 let tray;
+let trayMenuRuntime;
+let focusSystem;
 let appSettings = { ...defaultPetSettings };
 let musicPlaybackState = normalizePlaybackState();
 let activeLoginWindow = null;
@@ -93,6 +110,7 @@ const musicController = createMusicController({
     const cookies = await session.defaultSession.cookies.get({ domain: ".music.163.com" });
     return sessionCookieString(cookies);
   },
+  onSessionChanged: () => broadcastMusicAuthState(),
 });
 const neteaseAudioProxy = createNeteaseAudioProxy();
 
@@ -249,6 +267,15 @@ function broadcastMusicPlaybackState() {
   }
 }
 
+function broadcastMusicAuthState() {
+  const state = musicController.getSessionStatus();
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send("music:auth-state-changed", state);
+    }
+  }
+}
+
 function persistMusicPlaybackState(nextState) {
   musicPlaybackState = savePlaybackState(musicPlaybackStatePath(), nextState);
   broadcastMusicPlaybackState();
@@ -295,6 +322,21 @@ function sendPetCommand(command) {
     refreshTrayMenu();
   }
 
+  const toggleSettings = {
+    "clock:toggle": "clockEnabled",
+    "focus-indicator:toggle": "focusIndicatorEnabled",
+    "pet-click-through:toggle": "petClickThroughEnabled",
+    "music-click-through:toggle": "musicStatusClickThroughEnabled",
+  };
+  const toggleKey = toggleSettings[command];
+  if (toggleKey) {
+    appSettings = normalizePetSettings({ ...appSettings, [toggleKey]: !appSettings[toggleKey] });
+    persistSettings(appSettings);
+    sendSettingsToPet();
+    refreshTrayMenu();
+    return;
+  }
+
   if (command.startsWith("music:")) {
     handleMusicCommand(command);
     return;
@@ -305,7 +347,7 @@ function sendPetCommand(command) {
     return;
   }
 
-  if (command === "settings" || command === "settings:open") {
+  if (command === "settings" || command === "settings:open" || command === "settings:open-records") {
     openSettingsWindow();
     return;
   }
@@ -590,13 +632,31 @@ function refreshTrayMenu() {
   if (!tray || isSmokeTest) {
     return;
   }
-
-  tray.setContextMenu(Menu.buildFromTemplate(buildTrayMenuTemplate({
-    petState: appSettings.petState,
-    sendCommand: sendPetCommand,
-    resetPosition: resetPetPosition,
-    quit: () => app.quit(),
-  })));
+  if (!trayMenuRuntime) {
+    trayMenuRuntime = createTrayMenuRuntime({
+      Menu,
+      getState: () => appSettings,
+      buildTemplate: (state) => buildTrayMenuTemplate({
+        petState: state.petState,
+        sendCommand: sendPetCommand,
+        resetPosition: resetPetPosition,
+        clockEnabled: state.clockEnabled,
+        focusIndicatorEnabled: state.focusIndicatorEnabled,
+        petClickThroughEnabled: state.petClickThroughEnabled,
+        musicStatusClickThroughEnabled: state.musicStatusClickThroughEnabled,
+        focusDurationMinutes: state.focusDurationMinutes,
+        breakDurationMinutes: state.breakDurationMinutes,
+        longBreakDurationMinutes: state.longBreakDurationMinutes,
+        focusRoundsBeforeLongBreak: state.focusRoundsBeforeLongBreak,
+        pendingTaskName: state.pendingTaskName,
+        focusRecords: state.focusRecords,
+        focusSession: state.focusSession,
+        quit: () => app.quit(),
+      }),
+    });
+  }
+  trayMenuRuntime.setTray(tray);
+  trayMenuRuntime.refresh();
 }
 
 function createTray() {
@@ -702,15 +762,18 @@ function createPetWindow() {
   });
 }
 
-function openMusicSearchWindow() {
-  if (musicSearchWindow && !musicSearchWindow.isDestroyed()) {
-    if (musicSearchWindow.isMinimized()) musicSearchWindow.restore();
-    musicSearchWindow.show();
-    musicSearchWindow.focus();
-    return;
-  }
+const auxiliaryWindowManager = createWindowManager({
+  BrowserWindow,
+  resolveUrl: (rendererPath) => pathToFileURL(rendererPath).toString(),
+  onLoadError: (name, error) => logSmoke(`${name} loadURL rejected`, error.message),
+});
 
-  musicSearchWindow = new BrowserWindow({
+function openMusicSearchWindow() {
+  return auxiliaryWindowManager.open({
+    name: "music-search",
+    get: () => musicSearchWindow,
+    set: (window) => { musicSearchWindow = window; },
+    windowOptions: {
     width: MUSIC_SEARCH_WINDOW_SIZE.width,
     height: MUSIC_SEARCH_WINDOW_SIZE.height,
     minWidth: MUSIC_SEARCH_WINDOW_MIN_SIZE.width,
@@ -719,7 +782,7 @@ function openMusicSearchWindow() {
     minimizable: true,
     maximizable: true,
     fullscreenable: false,
-    title: "闂婂厖绠伴幖婊呭偍 璺?Desk Pet",
+    title: "音乐搜索 · Desk Pet",
     backgroundColor: "#f7f9fc",
     show: false,
     webPreferences: {
@@ -727,35 +790,18 @@ function openMusicSearchWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
-  });
-
-  musicSearchWindow.removeMenu();
-  musicSearchWindow.once("ready-to-show", () => {
-    if (musicSearchWindow && !musicSearchWindow.isDestroyed()) {
-      musicSearchWindow.show();
-    }
-  });
-
-  musicSearchWindow.on("closed", () => {
-    musicSearchWindow = undefined;
-  });
-
-  const rendererPath = path.join(__dirname, "renderer", "music-search.html");
-  musicSearchWindow.loadURL(pathToFileURL(rendererPath).toString()).catch((error) => {
-    logSmoke("music-search loadURL rejected", error.message);
+    },
+    rendererPath: path.join(__dirname, "renderer", "music-search.html"),
   });
 }
 
 let musicWindow;
 function openMusicWindow() {
-  if (musicWindow && !musicWindow.isDestroyed()) {
-    if (musicWindow.isMinimized()) musicWindow.restore();
-    musicWindow.show();
-    musicWindow.focus();
-    return;
-  }
-
-  musicWindow = new BrowserWindow({
+  return auxiliaryWindowManager.open({
+    name: "music",
+    get: () => musicWindow,
+    set: (window) => { musicWindow = window; },
+    windowOptions: {
     width: MUSIC_WINDOW_SIZE.width,
     height: MUSIC_WINDOW_SIZE.height,
     minWidth: MUSIC_WINDOW_MIN_SIZE.width,
@@ -772,22 +818,8 @@ function openMusicWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
-  });
-
-  musicWindow.removeMenu();
-  musicWindow.once("ready-to-show", () => {
-    if (musicWindow && !musicWindow.isDestroyed()) {
-      musicWindow.show();
-    }
-  });
-
-  musicWindow.on("closed", () => {
-    musicWindow = undefined;
-  });
-
-  const rendererPath = path.join(__dirname, "renderer", "music.html");
-  musicWindow.loadURL(pathToFileURL(rendererPath).toString()).catch((error) => {
-    logSmoke("music loadURL rejected", error.message);
+    },
+    rendererPath: path.join(__dirname, "renderer", "music.html"),
   });
 }
 
@@ -812,14 +844,11 @@ ipcMain.handle("music:control", async (_event, { action } = {}) => {
 });
 
 function openChatWindow() {
-  if (chatWindow && !chatWindow.isDestroyed()) {
-    if (chatWindow.isMinimized()) chatWindow.restore();
-    chatWindow.show();
-    chatWindow.focus();
-    return;
-  }
-
-  chatWindow = new BrowserWindow({
+  return auxiliaryWindowManager.open({
+    name: "chat",
+    get: () => chatWindow,
+    set: (window) => { chatWindow = window; },
+    windowOptions: {
     width: CHAT_WINDOW_SIZE.width,
     height: CHAT_WINDOW_SIZE.height,
     minWidth: CHAT_WINDOW_MIN_SIZE.width,
@@ -836,35 +865,18 @@ function openChatWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
-  });
-
-  chatWindow.removeMenu();
-  chatWindow.once("ready-to-show", () => {
-    if (chatWindow && !chatWindow.isDestroyed()) {
-      chatWindow.show();
-    }
-  });
-
-  chatWindow.on("closed", () => {
-    chatWindow = undefined;
-  });
-
-  const rendererPath = path.join(__dirname, "renderer", "chat.html");
-  chatWindow.loadURL(pathToFileURL(rendererPath).toString()).catch((error) => {
-    logSmoke("chat loadURL rejected", error.message);
+    },
+    rendererPath: path.join(__dirname, "renderer", "chat.html"),
   });
 }
 
 let settingsWindow;
 function openSettingsWindow() {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    if (settingsWindow.isMinimized()) settingsWindow.restore();
-    settingsWindow.show();
-    settingsWindow.focus();
-    return;
-  }
-
-  settingsWindow = new BrowserWindow({
+  return auxiliaryWindowManager.open({
+    name: "settings",
+    get: () => settingsWindow,
+    set: (window) => { settingsWindow = window; },
+    windowOptions: {
     width: 560,
     height: 640,
     minWidth: 420,
@@ -880,22 +892,8 @@ function openSettingsWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
-  });
-
-  settingsWindow.removeMenu();
-  settingsWindow.once("ready-to-show", () => {
-    if (settingsWindow && !settingsWindow.isDestroyed()) {
-      settingsWindow.show();
-    }
-  });
-
-  settingsWindow.on("closed", () => {
-    settingsWindow = undefined;
-  });
-
-  const rendererPath = path.join(__dirname, "renderer", "settings.html");
-  settingsWindow.loadURL(pathToFileURL(rendererPath).toString()).catch((error) => {
-    logSmoke("settings loadURL rejected", error.message);
+    },
+    rendererPath: path.join(__dirname, "renderer", "settings.html"),
   });
 }
 
@@ -1010,6 +1008,12 @@ app.whenReady().then(() => {
   musicPlaybackState = loadPlaybackState(musicPlaybackStatePath());
   createPetWindow();
   createTray();
+  focusSystem = registerFocusSystem({
+    ipcMain,
+    Notification,
+    powerMonitor,
+    sendCommand: sendPetCommand,
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -1025,6 +1029,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
+  focusSystem?.destroy();
   neteaseAudioProxy.close();
 });
 
@@ -1054,20 +1059,14 @@ ipcMain.handle("window:set-size", (_event, { size }) => {
   sendPetCommand(`size:${size}`);
 });
 
-ipcMain.handle("settings:update", (event, settings) => {
-  appSettings = persistSettings({ ...appSettings, ...settings });
-  refreshTrayMenu();
-  if (!petWindow || event.sender !== petWindow.webContents) {
-    sendSettingsToPet();
-  }
-  return appSettings;
-});
-
-// Return the current appSettings (deep-cloned via JSON) so auxiliary
-// windows like the standalone settings panel can render the same
-// state the main window is rendering.
-ipcMain.handle("settings:get", () => {
-  return normalizePetSettings(appSettings);
+registerSettingsIpc({
+  ipcMain,
+  getSettings: () => appSettings,
+  persistSettings: (settings) => persistSettings(settings),
+  normalizeSettings: normalizePetSettings,
+  refreshTray: refreshTrayMenu,
+  sendSettingsToPet,
+  getPetWindow: () => petWindow,
 });
 
 ipcMain.handle("pet:set-shape", (_event, { rect } = {}) => {
@@ -1354,8 +1353,11 @@ ipcMain.handle("pet:show-menu", (event) => {
     petState: appSettings.petState,
     focusDurationMinutes: appSettings.focusDurationMinutes,
     breakDurationMinutes: appSettings.breakDurationMinutes,
+    longBreakDurationMinutes: appSettings.longBreakDurationMinutes,
+    focusRoundsBeforeLongBreak: appSettings.focusRoundsBeforeLongBreak,
     pendingTaskName: appSettings.pendingTaskName,
     focusRecords: appSettings.focusRecords,
+    focusSession: appSettings.focusSession,
     recentTaskNames: collectRecentTaskNames(appSettings.focusRecords),
     sendCommand: sendPetCommand,
     quit: () => app.quit(),
@@ -1391,7 +1393,9 @@ ipcMain.handle("music:get-profile", async () => {
 
 ipcMain.handle("music:logout", async () => {
   try {
-    return await musicController.logout();
+    const result = await musicController.logout();
+    broadcastMusicAuthState();
+    return result;
   } catch (err) {
     return { success: false, error: err && err.message };
   }
@@ -1512,6 +1516,7 @@ function notifyRenderer(command) {
 function completeQrLogin(cookie) {
   const acceptResult = musicController.acceptWebLoginCookie(cookie);
   console.log("[music] completeQrLogin acceptResult=", JSON.stringify(acceptResult).slice(0, 200));
+  broadcastMusicAuthState();
   sendPetFeedback("music:feedback:login-success");
   notifyRenderer("music:login-completed");
 }

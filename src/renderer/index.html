@@ -3,16 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https: http://*.music.126.net; media-src 'self' http://127.0.0.1:* https://*.music.126.net; connect-src 'self'; object-src 'none'; base-uri 'none';" />
     <title>Desk Pet</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles/base.css" />
+    <link rel="stylesheet" href="./styles/pet.css" />
+    <link rel="stylesheet" href="./styles/widgets.css" />
+    <link rel="stylesheet" href="./styles/settings.css" />
+    <link rel="stylesheet" href="./styles/music.css" />
   </head>
   <body>
     <main id="stage" aria-label="desktop pet">
       <img id="pet" alt="" draggable="false" />
       <div id="mood-bubble" class="mood-bubble" aria-live="polite" hidden></div>
+      <div id="chat-reply-bubble" class="chat-reply-bubble" aria-live="polite" hidden></div>
       <div id="focus-indicator" class="focus-indicator" aria-live="polite" hidden></div>
       <div id="music-status-bar" class="music-status-bar" aria-label="网易云音乐状态条"></div>
       <div id="clock" class="clock-widget" aria-live="polite" hidden></div>
+      <div class="operation-feedback" data-operation-feedback role="status" aria-live="polite"></div>
 
       <section id="settings-panel" class="settings-panel" aria-label="桌宠设置" hidden>
         <div class="settings-panel__header">
@@ -140,6 +147,10 @@
               <button type="button" data-focus-task="写文档">写文档</button>
               <button type="button" data-focus-task="阅读">阅读</button>
             </div>
+            <div class="focus-task-summary" aria-live="polite">
+              <span>当前任务</span>
+              <strong id="focus-task-summary">未设置任务</strong>
+            </div>
             <dl class="settings-status-strip settings-status-strip--focus">
               <div class="status-pill"><dt>状态</dt><dd id="focus-phase">空闲</dd></div>
               <div class="status-pill"><dt>剩余</dt><dd id="focus-remaining">25:00</dd></div>
@@ -148,8 +159,10 @@
               <button id="focus-start" type="button">开始专注</button>
               <button id="break-start" type="button">开始休息</button>
               <button id="focus-pause" type="button">暂停</button>
+              <button id="focus-skip" type="button">跳过当前阶段</button>
               <button id="focus-reset" type="button">重置</button>
             </div>
+            <div id="focus-stats" class="focus-stats" aria-label="专注统计"></div>
           </section>
 
           <section class="settings-section focus-records-section" aria-labelledby="records-title">
@@ -171,6 +184,7 @@
     <script src="./action-config.js"></script>
     <script src="../music-command.js"></script>
     <script src="./pet-settings.js"></script>
+    <script src="./runtime-style.js"></script>
     <script src="./pet-visual-style.js"></script>
     <script src="./hold-visual-lock.js"></script>
     <script src="./pet-hit-test.js"></script>
@@ -178,12 +192,22 @@
     <script src="./walk-movement.js"></script>
     <script src="./mood-bubble.js"></script>
     <script src="./focus-timer.js"></script>
+    <script src="./focus-session-controller.js"></script>
+    <script src="./focus-pet-bridge.js"></script>
+    <script src="./focus-statistics.js"></script>
     <script src="./mouse-react.js"></script>
     <script src="./clock.js"></script>
+    <script src="./widget-state.js"></script>
     <script src="./widget-anchor.js"></script>
     <script src="./widget-coordination.js"></script>
     <script src="./widget-drag.js"></script>
+    <script src="./widget-runtime.js"></script>
+    <script src="./focus-runtime.js"></script>
+    <script src="./music-status-runtime.js"></script>
+    <script src="./pet-interaction-runtime.js"></script>
+    <script src="./frame-preload.js"></script>
     <script src="./music-status-view.js"></script>
+    <script src="./operation-feedback.js"></script>
     <script src="./renderer.js"></script>
     <script src="./music-search-view.js"></script>
     <script src="./music-playlist-view.js"></script>

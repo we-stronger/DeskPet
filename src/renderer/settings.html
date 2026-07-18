@@ -3,136 +3,171 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https: http://*.music.126.net; media-src 'self' http://127.0.0.1:* https://*.music.126.net; connect-src 'self'; object-src 'none'; base-uri 'none';" />
     <title>设置 · Desk Pet</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles/base.css" />
+    <link rel="stylesheet" href="./styles/settings.css" />
   </head>
   <body class="settings-window">
     <main class="settings-window__main" aria-label="设置">
       <header class="settings-window__header">
         <h1>设置</h1>
-        <p class="settings-window__hint">配置桌宠的外观、专注时长和 AI 模型。所有更改保存后会立即生效。</p>
+        <p class="settings-window__hint">调整桌宠、组件与专注体验。保存后立即生效。</p>
       </header>
-      <nav class="settings-window__tabs" role="tablist" aria-label="设置分类">
-        <button class="settings-window__tab is-active" role="tab" data-tab="appearance" aria-selected="true">🎚 外观</button>
-        <button class="settings-window__tab" role="tab" data-tab="focus" aria-selected="false">⏱ 专注</button>
-        <button class="settings-window__tab" role="tab" data-tab="llm" aria-selected="false">🤖 AI 设置</button>
-      </nav>
-      <section class="settings-window__panel is-active" data-panel="appearance" role="tabpanel">
-        <div class="settings-window__field">
-          <label class="settings-window__label" for="settings-size">尺寸 <span id="settings-size-value">100%</span></label>
-          <input id="settings-size" type="range" min="40" max="200" step="5" />
-          <p class="settings-window__help">桌宠的渲染大小，不影响窗口大小（窗口固定为 512×512）。</p>
+
+      <div class="settings-window__layout">
+        <nav class="settings-window__nav" role="tablist" aria-label="设置分类" aria-orientation="vertical">
+          <button id="settings-tab-appearance" class="settings-window__tab is-active" type="button" role="tab" data-tab="appearance" aria-controls="settings-panel-appearance" aria-selected="true" tabindex="0"><span aria-hidden="true">🎚</span><span>外观</span></button>
+          <button id="settings-tab-widgets" class="settings-window__tab" type="button" role="tab" data-tab="widgets" aria-controls="settings-panel-widgets" aria-selected="false" tabindex="-1"><span aria-hidden="true">▦</span><span>组件</span></button>
+          <button id="settings-tab-music" class="settings-window__tab" type="button" role="tab" data-tab="music" aria-controls="settings-panel-music" aria-selected="false" tabindex="-1"><span aria-hidden="true">♫</span><span>音乐</span></button>
+          <button id="settings-tab-focus" class="settings-window__tab" type="button" role="tab" data-tab="focus" aria-controls="settings-panel-focus" aria-selected="false" tabindex="-1"><span aria-hidden="true">⏱</span><span>专注</span></button>
+          <button id="settings-tab-llm" class="settings-window__tab" type="button" role="tab" data-tab="llm" aria-controls="settings-panel-llm" aria-selected="false" tabindex="-1"><span aria-hidden="true">✦</span><span>AI</span></button>
+          <button id="settings-tab-data" class="settings-window__tab" type="button" role="tab" data-tab="data" aria-controls="settings-panel-data" aria-selected="false" tabindex="-1"><span aria-hidden="true">⌁</span><span>数据</span></button>
+        </nav>
+
+        <div class="settings-window__content">
+          <section id="settings-panel-appearance" class="settings-window__panel is-active" data-panel="appearance" role="tabpanel" aria-labelledby="settings-tab-appearance">
+            <div class="settings-group">
+              <h2>桌宠外观</h2>
+              <div class="settings-row">
+                <label class="settings-window__label" for="settings-size">尺寸 <span id="settings-size-value">100%</span></label>
+                <input id="settings-size" type="range" min="40" max="200" step="5" />
+                <p class="settings-window__help">调整桌宠的渲染大小。</p>
+              </div>
+              <div class="settings-row">
+                <label class="settings-window__label" for="settings-speed">动画速度 <span id="settings-speed-value">100%</span></label>
+                <input id="settings-speed" type="range" min="20" max="200" step="5" />
+              </div>
+              <div class="settings-row">
+                <label class="settings-window__label" for="settings-opacity">不透明度 <span id="settings-opacity-value">100%</span></label>
+                <input id="settings-opacity" type="range" min="20" max="100" step="5" />
+              </div>
+            </div>
+            <div class="settings-group">
+              <h2>自动行为</h2>
+              <div class="settings-row settings-row--checks">
+                <label class="settings-window__check"><input id="settings-auto-behavior" type="checkbox" /><span>启用自动行为</span></label>
+                <label class="settings-window__check"><input id="settings-auto-walk" type="checkbox" /><span>允许自动散步</span></label>
+                <label class="settings-window__check"><input id="settings-mouse-react" type="checkbox" /><span>启用靠近反应</span></label>
+                <label class="settings-window__check"><input id="settings-daily-greeting" type="checkbox" /><span>启用每日问候</span></label>
+              </div>
+            </div>
+          </section>
+
+          <section id="settings-panel-widgets" class="settings-window__panel" data-panel="widgets" role="tabpanel" aria-labelledby="settings-tab-widgets" hidden>
+            <div class="settings-group">
+              <h2>显示位置</h2>
+              <div class="settings-row settings-row--columns">
+                <label><span class="settings-window__label">日期时间</span><select id="settings-clock-display-mode"><option value="floating">单独显示</option><option value="music">放在歌词栏</option><option value="hidden">隐藏</option></select></label>
+                <label><span class="settings-window__label">专注状态</span><select id="settings-focus-display-mode"><option value="floating">单独显示</option><option value="music">放在歌词栏</option><option value="hidden">隐藏</option></select></label>
+              </div>
+              <div class="settings-row settings-row--checks">
+                <label class="settings-window__check"><input id="settings-clock-enabled" type="checkbox" /><span>显示日期时间</span></label>
+                <label class="settings-window__check"><input id="settings-focus-indicator-enabled" type="checkbox" /><span>显示专注状态</span></label>
+              </div>
+            </div>
+            <div class="settings-group">
+              <h2>透明度</h2>
+              <div class="settings-row"><label class="settings-window__label" for="settings-clock-opacity">日期时间 <span id="settings-clock-opacity-value">100%</span></label><input id="settings-clock-opacity" type="range" min="20" max="100" step="1" /></div>
+              <div class="settings-row"><label class="settings-window__label" for="settings-music-status-opacity">歌词栏 <span id="settings-music-status-opacity-value">100%</span></label><input id="settings-music-status-opacity" type="range" min="20" max="100" step="1" /></div>
+            </div>
+            <div class="settings-group">
+              <h2>鼠标交互</h2>
+              <div class="settings-row settings-row--checks">
+                <label class="settings-window__check"><input id="settings-pet-click-through" type="checkbox" /><span>桌宠鼠标穿透</span></label>
+                <label class="settings-window__check"><input id="settings-music-status-click-through" type="checkbox" /><span>歌词栏鼠标穿透</span></label>
+              </div>
+              <div class="settings-row settings-row--action">
+                <div><strong>组件位置</strong><p class="settings-window__help">恢复音乐面板、日期时间、专注状态和歌词栏的默认位置。</p></div>
+                <button id="settings-reset-widget-positions" type="button">重置位置</button>
+              </div>
+            </div>
+          </section>
+
+          <section id="settings-panel-music" class="settings-window__panel" data-panel="music" role="tabpanel" aria-labelledby="settings-tab-music" hidden>
+            <div class="settings-group">
+              <h2>歌词栏样式</h2>
+              <div class="settings-row"><label class="settings-window__label" for="settings-lyric-color">歌词颜色 <span id="settings-lyric-color-value">#243044</span></label><input id="settings-lyric-color" type="color" value="#243044" /><p class="settings-window__help">用于歌词原文和翻译。</p></div>
+              <div class="settings-row"><label class="settings-window__label" for="settings-lyric-size">歌词字号 <span id="settings-lyric-size-value">12px</span></label><input id="settings-lyric-size" type="range" min="10" max="22" step="1" /></div>
+              <div class="settings-row"><label class="settings-window__label" for="settings-control-size">控制按钮 <span id="settings-control-size-value">31px</span></label><input id="settings-control-size" type="range" min="24" max="44" step="1" /></div>
+            </div>
+            <div class="settings-group">
+              <h2>音乐入口</h2>
+              <div class="settings-row settings-window__button-grid">
+                <button id="settings-open-music" type="button">打开音乐</button>
+                <button id="settings-open-queue" type="button">播放队列</button>
+                <button id="settings-open-history" type="button">播放历史</button>
+              </div>
+            </div>
+          </section>
+
+          <section id="settings-panel-focus" class="settings-window__panel" data-panel="focus" role="tabpanel" aria-labelledby="settings-tab-focus" hidden>
+            <div class="settings-group">
+              <h2>当前任务</h2>
+              <div class="settings-row"><label class="settings-window__label" for="settings-focus-task">任务名称</label><input id="settings-focus-task" type="text" maxlength="60" placeholder="例如：完成播放器状态统一" /><p class="settings-window__help">开始专注时使用此名称。</p><div id="settings-focus-recent-tasks" class="settings-window__recent-tasks" aria-label="最近任务"></div></div>
+            </div>
+            <div class="settings-group">
+              <h2>番茄周期</h2>
+              <div class="settings-row settings-window__number-grid">
+                <label><span>专注</span><input id="settings-focus-min" type="number" min="1" max="180" /><small>分钟</small></label>
+                <label><span>短休息</span><input id="settings-break-min" type="number" min="1" max="60" /><small>分钟</small></label>
+                <label><span>长休息</span><input id="settings-long-break-min" type="number" min="1" max="120" /><small>分钟</small></label>
+                <label><span>长休息前</span><input id="settings-focus-rounds" type="number" min="1" max="12" /><small>轮</small></label>
+              </div>
+              <p class="settings-window__help">每个阶段完成后等待确认，不会自动开始下一阶段。</p>
+            </div>
+            <div class="settings-group">
+              <h2>提醒与联动</h2>
+              <div class="settings-row settings-row--checks">
+                <label class="settings-window__check"><input id="settings-focus-notifications" type="checkbox" /><span>阶段完成时显示系统通知</span></label>
+                <label class="settings-window__check"><input id="settings-focus-sound" type="checkbox" /><span>阶段完成时播放提示音</span></label>
+                <label class="settings-window__check"><input id="settings-focus-pet-reactions" type="checkbox" /><span>启用桌宠陪伴反应</span></label>
+                <label class="settings-window__check"><input id="settings-focus-confirm-interrupt" type="checkbox" /><span>提前结束前要求确认</span></label>
+              </div>
+            </div>
+            <div class="settings-group">
+              <div class="settings-group__heading"><h2>专注记录</h2><button id="settings-focus-records-clear" type="button">清空</button></div>
+              <div class="settings-row"><ul id="settings-focus-records" class="settings-window__records"></ul></div>
+            </div>
+          </section>
+
+          <section id="settings-panel-llm" class="settings-window__panel" data-panel="llm" role="tabpanel" aria-labelledby="settings-tab-llm" hidden>
+            <div class="settings-group">
+              <h2>模型连接</h2>
+              <div class="settings-row"><label class="settings-window__label" for="settings-llm-endpoint">API 地址</label><input id="settings-llm-endpoint" type="text" autocomplete="off" /></div>
+              <div class="settings-row">
+                <label class="settings-window__label" for="settings-llm-model">模型</label>
+                <input id="settings-llm-model" type="text" autocomplete="off" list="settings-llm-model-suggestions" placeholder="glm-4-flash / qwen-plus / gpt-4o-mini" />
+                <datalist id="settings-llm-model-suggestions"><option value="glm-4-flash">glm-4-flash（免费、快速）</option><option value="glm-4-air">glm-4-air</option><option value="glm-4">glm-4</option><option value="glm-4-plus">glm-4-plus</option></datalist>
+              </div>
+              <div class="settings-row">
+                <label class="settings-window__label" for="settings-llm-apikey">API Key</label>
+                <div class="settings-window__apikey-row"><input id="settings-llm-apikey" type="password" autocomplete="off" placeholder="留空表示未配置" /><button id="settings-llm-apikey-toggle" type="button" class="settings-window__apikey-eye" aria-label="显示或隐藏 API Key">显示</button></div>
+                <p class="settings-window__help">凭据仅保存在本机设置中。</p>
+              </div>
+            </div>
+            <div class="settings-group">
+              <h2>系统提示词</h2>
+              <div class="settings-row"><label class="settings-window__label" for="settings-llm-prompt">提示词（可选）</label><textarea id="settings-llm-prompt" rows="4" placeholder="定义桌宠回复时的角色和语气"></textarea><div class="settings-window__prompt-actions"><button id="settings-llm-prompt-reset" type="button">恢复默认</button></div></div>
+            </div>
+            <div class="settings-window__save-row"><button id="settings-llm-save" type="button" class="settings-window__primary">保存 AI 设置</button></div>
+          </section>
+
+          <section id="settings-panel-data" class="settings-window__panel" data-panel="data" role="tabpanel" aria-labelledby="settings-tab-data" hidden>
+            <div class="settings-group settings-group--danger">
+              <h2>本地数据</h2>
+              <p class="settings-window__help">以下操作无法撤销，只影响本机数据。</p>
+              <div class="settings-row settings-row--action"><div><strong>播放历史</strong><p class="settings-window__help">不会删除网易云账号中的歌单。</p></div><button id="settings-clear-history" type="button">清空</button></div>
+              <div class="settings-row settings-row--action"><div><strong>聊天摘要</strong><p class="settings-window__help">移除本机保存的长期聊天摘要。</p></div><button id="settings-clear-chat-summary" type="button">清空</button></div>
+            </div>
+          </section>
         </div>
-        <div class="settings-window__field">
-          <label class="settings-window__label" for="settings-speed">速度 <span id="settings-speed-value">100%</span></label>
-          <input id="settings-speed" type="range" min="20" max="200" step="5" />
-          <p class="settings-window__help">动画播放速度（100% = 正常）。</p>
-        </div>
-        <div class="settings-window__field">
-          <label class="settings-window__label" for="settings-opacity">不透明度 <span id="settings-opacity-value">100%</span></label>
-          <input id="settings-opacity" type="range" min="20" max="100" step="5" />
-          <p class="settings-window__help">整只桌宠的透明度。</p>
-        </div>
-        <div class="settings-window__field">
-          <label class="settings-window__label" for="settings-lyric-color">歌词颜色 <span id="settings-lyric-color-value">#243044</span></label>
-          <input id="settings-lyric-color" type="color" value="#243044" />
-          <p class="settings-window__help">调整音乐状态条中歌词原文和翻译的主色。</p>
-        </div>
-        <div class="settings-window__field">
-          <label class="settings-window__label" for="settings-lyric-size">歌词字号 <span id="settings-lyric-size-value">12px</span></label>
-          <input id="settings-lyric-size" type="range" min="10" max="22" step="1" />
-          <p class="settings-window__help">只影响歌词内容，不改变按钮和歌曲标题。</p>
-        </div>
-        <div class="settings-window__field">
-          <label class="settings-window__label" for="settings-control-size">功能按钮大小 <span id="settings-control-size-value">31px</span></label>
-          <input id="settings-control-size" type="range" min="24" max="44" step="1" />
-          <p class="settings-window__help">调整音乐状态条里播放、上一首、下一首等按钮大小。</p>
-        </div>
-      </section>
-      <section class="settings-window__panel" data-panel="focus" role="tabpanel" hidden>
-        <div class="settings-window__field">
-          <label class="settings-window__label" for="settings-focus-min">专注时长（分钟）</label>
-          <input id="settings-focus-min" type="number" min="1" max="180" />
-          <p class="settings-window__help">番茄钟专注阶段的时长，1–180 分钟。</p>
-        </div>
-        <div class="settings-window__field">
-          <label class="settings-window__label" for="settings-break-min">休息时长（分钟）</label>
-          <input id="settings-break-min" type="number" min="1" max="60" />
-          <p class="settings-window__help">休息阶段时长，1–60 分钟。</p>
-        </div>
-        <div class="settings-window__field">
-          <label class="settings-window__label" for="settings-clock-display-mode">日期时间显示</label>
-          <select id="settings-clock-display-mode">
-            <option value="floating">单独显示</option>
-            <option value="music">放在歌词栏</option>
-            <option value="hidden">隐藏</option>
-          </select>
-        </div>
-        <div class="settings-window__field">
-          <label class="settings-window__label" for="settings-focus-display-mode">专注状态显示</label>
-          <select id="settings-focus-display-mode">
-            <option value="floating">单独显示</option>
-            <option value="music">放在歌词栏</option>
-            <option value="hidden">隐藏</option>
-          </select>
-        </div>
-        <label class="settings-window__check">
-          <input id="settings-clock-enabled" type="checkbox" />
-          <span>显示日期时间模块</span>
-        </label>
-        <label class="settings-window__check">
-          <input id="settings-focus-indicator-enabled" type="checkbox" />
-          <span>显示专注状态模块</span>
-        </label>
-        <label class="settings-window__check">
-          <input id="settings-pet-click-through" type="checkbox" />
-          <span>桌宠鼠标穿透</span>
-        </label>
-        <label class="settings-window__check">
-          <input id="settings-music-status-click-through" type="checkbox" />
-          <span>歌词栏鼠标穿透（仍显示并保持置顶）</span>
-        </label>
-        <div class="settings-window__field">
-          <label class="settings-window__label" for="settings-music-status-opacity">歌词栏透明度 <span id="settings-music-status-opacity-value">100%</span></label>
-          <input id="settings-music-status-opacity" type="range" min="20" max="100" step="1" />
-        </div>
-      </section>
-      <section class="settings-window__panel" data-panel="llm" role="tabpanel" hidden>
-        <div class="settings-window__field">
-          <label class="settings-window__label" for="settings-llm-apikey">ZhipuAI API Key</label>
-          <div class="settings-window__apikey-row">
-            <input id="settings-llm-apikey" type="password" autocomplete="off" placeholder="留空表示未配置" />
-            <button id="settings-llm-apikey-toggle" type="button" class="settings-window__apikey-eye" aria-label="显示或隐藏 API key">👁</button>
-          </div>
-          <p class="settings-window__help">在 ZhipuAI 开放平台申请。配置后才能在“和我聊聊”里使用 AI 对话。</p>
-        </div>
-        <div class="settings-window__field">
-          <label class="settings-window__label" for="settings-llm-model">模型</label>
-          <input id="settings-llm-model" type="text" autocomplete="off" list="settings-llm-model-suggestions" placeholder="glm-4-flash / qwen-plus / gpt-4o-mini" />
-          <datalist id="settings-llm-model-suggestions">
-            <option value="glm-4-flash">glm-4-flash（免费，速度快，推荐）</option>
-            <option value="glm-4-air">glm-4-air</option>
-            <option value="glm-4">glm-4</option>
-            <option value="glm-4-plus">glm-4-plus（更强、更贵）</option>
-          </datalist>
-        </div>
-        <div class="settings-window__field">
-          <label class="settings-window__label" for="settings-llm-endpoint">API 地址</label>
-          <input id="settings-llm-endpoint" type="text" autocomplete="off" />
-        </div>
-        <div class="settings-window__field">
-          <label class="settings-window__label" for="settings-llm-prompt">系统提示词（可选）</label>
-          <textarea id="settings-llm-prompt" rows="4" placeholder="例如：你是一个陪伴用户的桌面宠物，用温柔可爱的语气回复。"></textarea>
-          <div class="settings-window__prompt-actions">
-            <button id="settings-llm-prompt-reset" type="button">恢复默认</button>
-          </div>
-        </div>
-        <div class="settings-window__save-row">
-          <button id="settings-llm-save" type="button" class="settings-window__primary">保存 AI 设置</button>
-        </div>
-      </section>
-      <div id="settings-status" class="settings-window__status" role="status" aria-live="polite"></div>
+      </div>
+
+      <div class="operation-feedback" data-operation-feedback role="status" aria-live="polite"></div>
+      <div id="settings-status" class="settings-window__status" role="status" aria-live="off"></div>
     </main>
+    <script src="./operation-feedback.js"></script>
     <script src="./settings.js"></script>
   </body>
 </html>

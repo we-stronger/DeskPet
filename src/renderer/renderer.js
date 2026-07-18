@@ -3,6 +3,7 @@
 
   const pet = document.querySelector("#pet");
   const moodBubble = document.querySelector("#mood-bubble");
+  const chatReplyBubble = document.querySelector("#chat-reply-bubble");
   const stage = document.querySelector("#stage");
   const settingsPanel = document.querySelector("#settings-panel");
   const sizeInput = document.querySelector("#size-input");
@@ -25,6 +26,7 @@
   const focusStart = document.querySelector("#focus-start");
   const breakStart = document.querySelector("#break-start");
   const focusPause = document.querySelector("#focus-pause");
+  const focusSkip = document.querySelector("#focus-skip");
   const focusReset = document.querySelector("#focus-reset");
   const focusPhaseEl = document.querySelector("#focus-phase");
   const focusRemainingEl = document.querySelector("#focus-remaining");
@@ -34,10 +36,14 @@
   const focusDurationInput = document.querySelector("#focus-duration-input");
   const breakDurationInput = document.querySelector("#break-duration-input");
   const taskNameInput = document.querySelector("#task-name-input");
+  const focusTaskSummary = document.querySelector("#focus-task-summary");
   const focusRecordsEl = document.querySelector("#focus-records");
   const focusRecordsClear = document.querySelector("#focus-records-clear");
+  const focusStatsEl = document.querySelector("#focus-stats");
   const clockEl = document.querySelector("#clock");
   const clockEnabledInput = document.querySelector("#clock-enabled-input");
+  const clockOpacityInput = document.querySelector("#clock-opacity-input");
+  const clockOpacityOutput = document.querySelector("#clock-opacity-output");
   const clockDisplayModeInput = document.querySelector("#clock-display-mode-input");
   const focusIndicatorEnabledInput = document.querySelector("#focus-indicator-enabled-input");
   const focusDisplayModeInput = document.querySelector("#focus-display-mode-input");
@@ -50,14 +56,26 @@
   const pointerPolicy = window.DeskpetPointerActionPolicy;
   const visualStyle = window.DeskpetVisualStyle;
   const bridge = window.deskpet;
+  const runtimeStyle = window.DeskpetRuntimeStyle?.createRuntimeStyleManager?.(document);
   const musicCommand = window.DeskpetMusicCommand;
   const holdVisualLock = window.DeskpetHoldVisualLock.createHoldVisualLock(pet);
-  const focusTimer = new window.DeskpetFocusTimer.FocusTimer();
+  const framePreloader = window.DeskpetFramePreload.createFramePreloader();
+
+  function applyRuntimeStyle(element, id, declarations) {
+    if (!runtimeStyle || !element) return false;
+    return runtimeStyle.apply(element, id, declarations);
+  }
+
+  function clearRuntimeStyle(element, id = "") {
+    if (!runtimeStyle || !element) return false;
+    return runtimeStyle.clear(element, id);
+  }
   const mouseReact = new window.DeskpetMouseReact.MouseReact();
   const clock = new window.DeskpetClock.Clock();
   let mouseReactEnabled = true;
   let dailyGreetingEnabled = true;
   let clockEnabled = true;
+  let clockOpacityPercent = 100;
   let clockDisplayMode = "floating";
   let focusIndicatorEnabled = true;
   let focusDisplayMode = "floating";
@@ -79,10 +97,17 @@
   let autoWalkEnabled = true;
   let focusDurationMinutes = 25;
   let breakDurationMinutes = 5;
+  let longBreakDurationMinutes = 15;
+  let focusRoundsBeforeLongBreak = 4;
+  let focusNotificationsEnabled = true;
+  let focusSoundEnabled = false;
+  let focusPetReactionsEnabled = true;
+  let focusConfirmInterrupt = true;
   let pendingTaskName = "";
   let focusRecords = [];
-  let currentFocusTaskName = "";
-  let currentFocusDurationMs = 0;
+  let focusSessionController = null;
+  let focusRuntime = null;
+  let focusSessionSnapshot = null;
   // Top-left position of the clock widget, in CSS pixels relative to
   // #stage. null = let the auto-anchor place it. The renderer skips
   // the auto-anchor (which would otherwise track the empty margins of
@@ -99,9 +124,11 @@
   let focusIndicatorPosition = null;
   let musicStatusPosition = null;
   let musicStatusPlaying = false;
+  let musicProgressSeeking = null;
+  let lastMusicStatusRenderKey = "";
   let musicLyricStyle = { color: "#243044", fontSize: 12, controlSize: 31 };
-  let musicStatusState = { title: "网易云音乐", artist: "", status: "待命", lyric: "", translation: "", songId: "", liked: false };
-  let audioStatusUnsubscribe = null;
+  let musicStatusState = { title: "网易云音乐", artist: "", status: "待命", lyric: "", translation: "", nextLyric: "", nextTranslation: "", songId: "", liked: false, coverUrl: "", currentTime: 0, duration: 0 };
+  let musicStatusRuntime = null;
   const BASE_PET_VISUAL_SIZE = 512;
   const MUSIC_STATUS_WIDTH = 400;
   const MUSIC_STATUS_HEIGHT = 132;
@@ -146,6 +173,67 @@
       { extraBottom: MUSIC_STATUS_DRAG_EXTRA_BOTTOM },
     );
   }
+  let widgetRuntime = null;
+  function ensureWidgetRuntime() {
+    if (widgetRuntime || !window.DeskpetWidgetRuntime?.WidgetRuntime) return widgetRuntime;
+    widgetRuntime = new window.DeskpetWidgetRuntime.WidgetRuntime({
+      elements: {
+        clock: {
+          element: clockEl,
+          size: { width: 76, height: 50 },
+          priority: 2,
+          managePresentation: false,
+          applyOpacity: false,
+          clampPosition: (position) => clampClockPosition(position),
+          toStylePosition: (position) => ({ left: `${visualToCssLeft(position.x)}px`, top: `${position.y}px` }),
+          onDragStart: () => { isDraggingClock = true; },
+          onDragEnd: (state) => { clockPosition = state.position; isDraggingClock = false; refreshPetShape(); },
+        },
+        focus: {
+          element: focusIndicator,
+          size: { width: 126, height: 34 },
+          priority: 1,
+          managePresentation: false,
+          applyOpacity: false,
+          clampPosition: (position) => clampStageWidgetPosition(position, focusIndicator, 126, 34),
+          onDragStart: () => { isDraggingFocus = true; },
+          onDragEnd: (state) => { focusIndicatorPosition = state.position; isDraggingFocus = false; refreshPetShape(); },
+        },
+        music: {
+          element: musicStatusBar,
+          size: { width: MUSIC_STATUS_WIDTH, height: MUSIC_STATUS_HEIGHT },
+          priority: 0,
+          managePresentation: false,
+          applyOpacity: false,
+          clampPosition: (position) => clampMusicStatusPosition(position),
+          onDragStart: () => { isDraggingMusic = true; },
+          onDragEnd: (state) => { musicStatusPosition = state.position; isDraggingMusic = false; refreshPetShape(); },
+        },
+      },
+      dragApi: window.DeskpetWidgetDrag,
+      coordinationApi: window.DeskpetWidgetCoordination,
+      runtimeStyle,
+      onPersist: (payload, dirtyIds) => {
+        const patch = {};
+        if (dirtyIds.includes("clock")) patch.clockPosition = payload.widgets.clock.position;
+        if (dirtyIds.includes("focus")) patch.focusIndicatorPosition = payload.widgets.focus.position;
+        if (dirtyIds.includes("music")) patch.musicStatusPosition = payload.widgets.music.position;
+        if (Object.keys(patch).length && typeof bridge.updateSettings === "function") {
+          bridge.updateSettings(patch).catch(() => {});
+        }
+      },
+    });
+    return widgetRuntime;
+  }
+  function loadWidgetRuntime(settingsValue) {
+    const runtime = ensureWidgetRuntime();
+    if (!runtime) return;
+    runtime.load({ widgets: {
+      clock: { position: clockPosition || undefined },
+      focus: { position: focusIndicatorPosition || undefined },
+      music: { position: musicStatusPosition || undefined },
+    } });
+  }
   function normalizeMusicLyricStyle(style = {}) {
     const color = typeof style.color === "string" && /^#[0-9a-f]{6}$/i.test(style.color.trim())
       ? style.color.trim()
@@ -182,39 +270,58 @@
   }
   function applyClockPosition() {
     if (!clockEl || !clockPosition) return;
-    clockEl.style.left = `${visualToCssLeft(clockPosition.x)}px`;
-    clockEl.style.top = `${clockPosition.y}px`;
-    clockEl.style.right = "auto";
+    applyRuntimeStyle(clockEl, "clock-position", {
+      left: `${visualToCssLeft(clockPosition.x)}px`,
+      top: `${clockPosition.y}px`,
+      right: "auto",
+    });
   }
   function applyFocusIndicatorPosition() {
     if (!focusIndicator || !focusIndicatorPosition) return;
-    focusIndicator.style.left = `${focusIndicatorPosition.x}px`;
-    focusIndicator.style.top = `${focusIndicatorPosition.y}px`;
-    focusIndicator.style.right = "auto";
-    focusIndicator.style.bottom = "auto";
+    applyRuntimeStyle(focusIndicator, "focus-position", {
+      left: `${focusIndicatorPosition.x}px`,
+      top: `${focusIndicatorPosition.y}px`,
+      right: "auto",
+      bottom: "auto",
+    });
   }
   function clearFocusIndicatorPosition() {
     if (!focusIndicator) return;
-    focusIndicator.style.left = "";
-    focusIndicator.style.top = "";
-    focusIndicator.style.right = "";
-    focusIndicator.style.bottom = "";
+    clearRuntimeStyle(focusIndicator);
   }
   function applyMusicStatusPosition() {
     if (!musicStatusBar || !musicStatusPosition) return;
-    musicStatusBar.style.left = `${musicStatusPosition.x}px`;
-    musicStatusBar.style.top = `${musicStatusPosition.y}px`;
-    musicStatusBar.style.right = "auto";
-    musicStatusBar.style.bottom = "auto";
+    applyRuntimeStyle(musicStatusBar, "music-status-position", {
+      left: `${musicStatusPosition.x}px`,
+      top: `${musicStatusPosition.y}px`,
+      right: "auto",
+      bottom: "auto",
+    });
   }
   function applyMusicStatusPresentation() {
     if (!musicStatusBar) return;
-    musicStatusBar.style.opacity = String(Math.max(0.2, Math.min(1, musicStatusOpacityPercent / 100)));
+    applyRuntimeStyle(musicStatusBar, "music-status-presentation", {
+      opacity: String(Math.max(0.2, Math.min(1, musicStatusOpacityPercent / 100))),
+    });
     musicStatusBar.classList.toggle("is-click-through", musicStatusClickThroughEnabled);
+    musicStatusBar.dataset.clickThrough = musicStatusClickThroughEnabled ? "true" : "false";
+    musicStatusBar.setAttribute(
+      "aria-label",
+      musicStatusClickThroughEnabled ? "网易云音乐状态条，当前已穿透" : "网易云音乐状态条",
+    );
   }
   function applyPetMouseEventsPolicy() {
     if (!bridge || typeof bridge.setPetMouseEventsIgnored !== "function") return;
-    const ignored = petClickThroughEnabled || musicStatusClickThroughEnabled;
+    if (stage) {
+      stage.dataset.petClickThrough = petClickThroughEnabled ? "true" : "false";
+      stage.setAttribute(
+        "aria-label",
+        petClickThroughEnabled ? "桌宠，当前已穿透" : "桌宠",
+      );
+    }
+    const ignored = pointerPolicy && typeof pointerPolicy.shouldIgnorePetMouseEvents === "function"
+      ? pointerPolicy.shouldIgnorePetMouseEvents({ petClickThroughEnabled, musicStatusClickThroughEnabled })
+      : petClickThroughEnabled;
     if (ignored === lastMouseEventsIgnored) return;
     lastMouseEventsIgnored = ignored;
     bridge.setPetMouseEventsIgnored(ignored).catch(() => {
@@ -223,10 +330,7 @@
   }
   function clearMusicStatusPosition() {
     if (!musicStatusBar) return;
-    musicStatusBar.style.left = "";
-    musicStatusBar.style.top = "";
-    musicStatusBar.style.right = "";
-    musicStatusBar.style.bottom = "";
+    clearRuntimeStyle(musicStatusBar, "music-status-position");
   }
   function coordinatePinnedWidgetPositions() {
     const coordinator = window.DeskpetWidgetCoordination;
@@ -249,22 +353,20 @@
         size: { width: 76, height: 50 },
       },
     });
-    if (resolved.music && musicStatusBar && !isDraggingMusic) {
-      musicStatusBar.style.left = `${resolved.music.x}px`;
-      musicStatusBar.style.top = `${resolved.music.y}px`;
-      musicStatusBar.style.right = "auto";
-      musicStatusBar.style.bottom = "auto";
-    }
     if (resolved.focus && focusIndicator && !isDraggingFocus) {
-      focusIndicator.style.left = `${resolved.focus.x}px`;
-      focusIndicator.style.top = `${resolved.focus.y}px`;
-      focusIndicator.style.right = "auto";
-      focusIndicator.style.bottom = "auto";
+      applyRuntimeStyle(focusIndicator, "focus-position", {
+        left: `${resolved.focus.x}px`,
+        top: `${resolved.focus.y}px`,
+        right: "auto",
+        bottom: "auto",
+      });
     }
     if (resolved.clock && clockEl && !isDraggingClock) {
-      clockEl.style.left = `${visualToCssLeft(resolved.clock.x)}px`;
-      clockEl.style.top = `${resolved.clock.y}px`;
-      clockEl.style.right = "auto";
+      applyRuntimeStyle(clockEl, "clock-position", {
+        left: `${visualToCssLeft(resolved.clock.x)}px`,
+        top: `${resolved.clock.y}px`,
+        right: "auto",
+      });
     }
   }
   const animation = new window.AnimationController({
@@ -279,6 +381,36 @@
     energyDrainPerTick: 2,
     interactionEnergyCost: 4,
     wakeEnergy: 35,
+  });
+  const focusPetBridge = new window.DeskpetFocusPetBridge.FocusPetBridge({
+    onBehavior: ({ action, reason }) => {
+      if (!focusPetReactionsEnabled && !reason.startsWith("drag")) return;
+      play(action);
+    },
+    onBubble: ({ text }) => {
+      if (focusPetReactionsEnabled) showCustomBubble(text);
+    },
+    onQuietMode: (quiet) => {
+      focusActive = quiet;
+      walkMovementRunner.setReduced(quiet);
+    },
+    resolveAmbientAction: (snapshot) => {
+      if (snapshot && snapshot.phase === "focus") return "idle";
+      const audioState = window.DeskpetAudioPlayer?.getState?.();
+      if (audioState && audioState.playing) return "music";
+      return petState.sleeping ? "sleep" : "idle";
+    },
+  });
+  const petInteractionRuntime = new window.DeskpetPetInteractionRuntime.PetInteractionRuntime({
+    drag,
+    petState,
+    focusPetBridge,
+    currentFocusSnapshot,
+    resolveAction: (result) => pointerPolicy.visualActionForPointerResult(result),
+    onTap: (feedback) => {
+      savePetState();
+      showMoodBubble(feedback.action);
+    },
   });
 
   // Pet sprite hit-region: the pet window is a fixed 512闂?12 transparent
@@ -328,7 +460,10 @@
     const config = actions[action];
     if (!config || !Number.isFinite(config.frames) || config.frames <= 0) return;
     const paths = Array.from({ length: config.frames }, (_, index) => framePathForAction(action, index + 1));
-    const pending = Promise.all(paths.map((src) => hitTester.load(src)))
+    const pending = Promise.all(paths.map((src) => {
+      framePreloader.preload(src);
+      return hitTester.load(src);
+    }))
       .then((frames) => {
         const validFrames = frames.filter((frame) => frame && frame.data && frame.width > 0);
         const boxes = validFrames.map((frame) => window.DeskpetPetHitTest.computeOpaqueBoundingBox(frame));
@@ -371,9 +506,10 @@
     const rects = [];
     addVisibleUiShapeRect(rects, settingsPanel);
     addVisibleUiShapeRect(rects, moodBubble);
+    addVisibleUiShapeRect(rects, chatReplyBubble);
     addVisibleUiShapeRect(rects, clockEl);
     addVisibleUiShapeRect(rects, focusIndicator);
-    addVisibleUiShapeRect(rects, musicStatusBar);
+    if (!musicStatusClickThroughEnabled) addVisibleUiShapeRect(rects, musicStatusBar);
     addVisibleUiShapeRect(rects, document.querySelector("#music-panel"));
     return rects;
   }
@@ -440,6 +576,9 @@
   let idleTimer = 0;
   let temporaryActionTimer = 0;
   let moodBubbleTimer = 0;
+  let chatBubbleTimer = 0;
+  let chatBubbleQueue = [];
+  let chatBubbleActive = false;
 
   function setOutput(output, value) {
     if (output) {
@@ -450,6 +589,10 @@
 
   function updateClockWidget() {
     if (!clockEl) return;
+    clockEl.dataset.displayMode = clockDisplayMode;
+    applyRuntimeStyle(clockEl, "clock-presentation", {
+      opacity: String(Math.max(0.2, Math.min(1, clockOpacityPercent / 100))),
+    });
     if (!clockEnabled || clockDisplayMode !== "floating") {
       clockEl.hidden = true;
       clockEl.classList.remove("is-visible");
@@ -469,14 +612,23 @@
     return clock.format(new Date());
   }
 
+  function hideEmbeddedClockWidget() {
+    if (!clockEl || !clockEnabled || clockDisplayMode !== "music") return;
+    clockEl.dataset.displayMode = "music";
+    clockEl.hidden = true;
+    clockEl.classList.remove("is-visible");
+    clearRuntimeStyle(clockEl, "clock-anchor");
+  }
+
   function focusSummaryText() {
-    if (!focusIndicatorEnabled || focusDisplayMode !== "music" || focusTimer.phase === "idle") return "";
-    const total = Math.max(0, Math.ceil(focusTimer.remainingMs / 1000));
+    const snapshot = currentFocusSnapshot();
+    if (!focusIndicatorEnabled || focusDisplayMode !== "music" || snapshot.phase === "idle") return "";
+    const total = Math.max(0, Math.ceil(snapshot.remainingMs / 1000));
     const mm = String(Math.floor(total / 60)).padStart(2, "0");
     const ss = String(total % 60).padStart(2, "0");
-    const phaseLabel = focusTimer.phase.includes("break") ? "休息" : "专注";
-    const paused = focusTimer.phase.startsWith("paused") ? "已暂停 · " : "";
-    const task = currentFocusTaskName || pendingTaskName;
+    const phaseLabel = snapshot.phase.includes("break") ? "休息" : snapshot.phase.includes("waiting") ? "等待" : "专注";
+    const paused = snapshot.status === "paused" ? "已暂停 · " : "";
+    const task = snapshot.taskName || pendingTaskName;
     return `${phaseLabel} ${paused}${mm}:${ss}${task ? ` · ${task}` : ""}`;
   }
 
@@ -488,6 +640,7 @@
 
   function setMusicStatus(status, { playing = musicStatusPlaying } = {}) {
     if (!musicStatusBar || !window.DeskpetMusicStatusView) return;
+    hideEmbeddedClockWidget();
     musicStatusPlaying = playing;
     if (status && typeof status === "object") {
       musicStatusState = { ...musicStatusState, ...status };
@@ -497,20 +650,117 @@
         status: status || "",
         lyric: "",
         translation: "",
+        nextLyric: "",
+        nextTranslation: "",
       };
     }
-    musicStatusBar.innerHTML = window.DeskpetMusicStatusView.renderMusicStatusBar({
+    const playMode = window.DeskpetMusicPlaybackService?.getPlaybackState?.().mode || "sequence";
+    const playbackCapabilities = window.DeskpetMusicPlaybackService?.getPlaybackCapabilities?.() || {};
+    const clockSummary = clockSummaryText();
+    const focusSummary = focusSummaryText();
+    const musicStatusRenderKey = JSON.stringify({
       ...musicStatusState,
+      currentTime: 0,
+      duration: 0,
       playing: musicStatusPlaying,
       lyricStyle: musicLyricStyle,
-      playMode: window.DeskpetMusicPlaybackService?.getPlaybackState?.().mode || "sequence",
-      playbackCapabilities: window.DeskpetMusicPlaybackService?.getPlaybackCapabilities?.() || {},
-      clockSummary: clockSummaryText(),
-      focusSummary: focusSummaryText(),
+      playMode,
+      playbackCapabilities,
+      clockSummary,
+      focusSummary,
     });
+    if (musicStatusRenderKey !== lastMusicStatusRenderKey || !musicStatusBar.querySelector(".music-status-bar__controls")) {
+      musicStatusBar.innerHTML = window.DeskpetMusicStatusView.renderMusicStatusBar({
+        ...musicStatusState,
+        playing: musicStatusPlaying,
+        lyricStyle: musicLyricStyle,
+        playMode,
+        playbackCapabilities,
+        clockSummary,
+        focusSummary,
+      });
+      lastMusicStatusRenderKey = musicStatusRenderKey;
+      musicStatusBar.querySelectorAll("img[data-cover-url]").forEach((image) => {
+        image.addEventListener("error", () => {
+          image.hidden = true;
+          const placeholder = image.nextElementSibling;
+          if (placeholder) placeholder.hidden = false;
+        }, { once: true });
+      });
+    }
+    const lyricStyle = normalizeMusicLyricStyle(musicLyricStyle);
+    applyRuntimeStyle(musicStatusBar, "music-status-lyric", {
+      "--music-lyric-color": lyricStyle.color,
+      "--music-lyric-size": `${lyricStyle.fontSize}px`,
+      "--music-control-size": `${lyricStyle.controlSize}px`,
+      "--music-progress": String(musicStatusState.duration > 0
+        ? Math.min(100, Math.max(0, (Number(musicStatusState.currentTime || 0) / Number(musicStatusState.duration)) * 100))
+        : 0),
+    });
+    if (musicProgressSeeking) {
+      updateMusicProgressPreview(musicProgressSeeking.seconds, musicProgressSeeking.duration);
+    } else {
+      updateMusicProgressDisplay(musicStatusState.currentTime, musicStatusState.duration);
+    }
     if (musicStatusPosition) applyMusicStatusPosition();
     applyMusicStatusPresentation();
     requestAnimationFrame(refreshPetShape);
+  }
+
+  function updateMusicProgressDisplay(currentTime, duration) {
+    const progress = musicStatusBar?.querySelector(".music-status-bar__progress");
+    if (!progress) return;
+    const safeDuration = Math.max(0, Number(duration) || 0);
+    const safeCurrentTime = Math.max(0, Math.min(safeDuration, Number(currentTime) || 0));
+    const percent = safeDuration ? (safeCurrentTime / safeDuration) * 100 : 0;
+    progress.dataset.progress = String(percent);
+    progress.setAttribute("aria-valuenow", String(Math.round(percent)));
+    const label = progress.querySelector(".music-status-bar__progress-time");
+    if (label) label.textContent = `${formatMusicTime(safeCurrentTime)} / ${formatMusicTime(safeDuration)}`;
+  }
+
+  function formatMusicTime(seconds) {
+    return window.DeskpetMusicStatusView?.formatTime
+      ? window.DeskpetMusicStatusView.formatTime(seconds)
+      : "0:00";
+  }
+
+  function progressPositionFromEvent(event) {
+    const progress = musicStatusBar?.querySelector(".music-status-bar__progress");
+    if (!progress || typeof progress.getBoundingClientRect !== "function") return null;
+    const duration = Number(progress.dataset.duration);
+    const rect = progress.getBoundingClientRect();
+    if (!Number.isFinite(duration) || duration <= 0 || !rect.width) return null;
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    return { progress, duration, seconds: ratio * duration };
+  }
+
+  function updateMusicProgressPreview(seconds, duration) {
+    const progress = musicStatusBar?.querySelector(".music-status-bar__progress");
+    if (!progress) return;
+    const safeDuration = Math.max(0, Number(duration) || 0);
+    const safeSeconds = Math.max(0, Math.min(safeDuration, Number(seconds) || 0));
+    progress.classList.add("is-seeking");
+    progress.setAttribute("aria-valuenow", safeDuration ? String(Math.round((safeSeconds / safeDuration) * 100)) : "0");
+    const label = progress.querySelector(".music-status-bar__progress-time");
+    if (label) label.textContent = `${formatMusicTime(safeSeconds)} / ${formatMusicTime(safeDuration)}`;
+    applyRuntimeStyle(musicStatusBar, "music-progress-preview", {
+      "--music-progress-preview": safeDuration ? String((safeSeconds / safeDuration) * 100) : "0",
+    });
+  }
+
+  function finishMusicProgressSeek(event, { commit = true } = {}) {
+    if (!musicProgressSeeking || event.pointerId !== musicProgressSeeking.pointerId) return;
+    const position = progressPositionFromEvent(event) || musicProgressSeeking;
+    if (commit && window.DeskpetAudioPlayer?.seekTo) {
+      window.DeskpetAudioPlayer.seekTo(position.seconds);
+    }
+    if (musicStatusBar?.hasPointerCapture?.(event.pointerId)) {
+      musicStatusBar.releasePointerCapture(event.pointerId);
+    }
+    musicProgressSeeking = null;
+    clearRuntimeStyle(musicStatusBar, "music-progress-preview");
+    musicStatusBar?.querySelector(".music-status-bar__progress")?.classList.remove("is-seeking");
   }
 
   function setMusicPlaybackStatus(text) {
@@ -527,6 +777,11 @@
       status: state && state.playing ? "正在播放" : "已暂停",
       lyric: lyric && lyric.text ? lyric.text : "",
       translation: lyric && lyric.translation ? lyric.translation : "",
+      nextLyric: state && state.nextLyric && state.nextLyric.text ? state.nextLyric.text : "",
+      nextTranslation: state && state.nextLyric && state.nextLyric.translation ? state.nextLyric.translation : "",
+      coverUrl: meta.coverUrl || meta.coverImgUrl || meta.picUrl || "",
+      currentTime: state && Number.isFinite(state.currentTime) ? state.currentTime : 0,
+      duration: state && Number.isFinite(state.duration) ? state.duration : 0,
     };
     if (Object.prototype.hasOwnProperty.call(meta, "liked")) {
       status.liked = meta.liked === true;
@@ -547,10 +802,19 @@
   }
 
   function ensureAudioStatusSubscription() {
-    if (audioStatusUnsubscribe) return;
+    if (musicStatusRuntime) return;
     const audioPlayer = window.DeskpetAudioPlayer;
-    if (!audioPlayer || typeof audioPlayer.onStateChange !== "function") return;
-    audioStatusUnsubscribe = audioPlayer.onStateChange(async (state) => {
+    if (!audioPlayer || typeof audioPlayer.onStateChange !== "function" || !window.DeskpetMusicStatusRuntime?.MusicStatusRuntime) return;
+    musicStatusRuntime = new window.DeskpetMusicStatusRuntime.MusicStatusRuntime({
+      audioPlayer,
+      onRender: (state) => {
+        handleAudioStatusState(state);
+      },
+    });
+    musicStatusRuntime.start();
+  }
+
+  async function handleAudioStatusState(state) {
       if (!state || !state.source) return;
       if (state.ended && window.DeskpetMusicPlaybackService) {
         const queueResult = await window.DeskpetMusicPlaybackService.playNext({
@@ -575,7 +839,6 @@
       if (nextStatus.songId && nextStatus.songId !== previousSongId) {
         refreshCurrentLikedState(nextStatus.songId);
       }
-    });
   }
 
   async function runMusicStatusAction(action) {
@@ -616,21 +879,15 @@
       }
       return;
     }
-    if (action === "openPanel" || action === "account") {
+    if (action === "account") {
       setMusicStatus("打开面板");
       if (window.DeskpetMusicPanel && typeof window.DeskpetMusicPanel.open === "function") {
         window.DeskpetMusicPanel.open("home");
-        setMusicStatus(action === "account" ? "账号面板已打开" : "面板已打开");
+        setMusicStatus("账号面板已打开");
         return;
       }
       const result = await bridge.openMusicWindow?.().catch(() => null);
       setMusicStatus(result && result.success ? "面板已打开" : "面板打开失败");
-      return;
-    }
-    if (action === "openNetease") {
-      setMusicStatus("打开网易云");
-      const result = await bridge.openInNetEase?.("orpheus://").catch(() => null);
-      setMusicStatus(result && result.success ? "网易云已打开" : "打开失败");
       return;
     }
     if (action === "cycleMode" && window.DeskpetMusicPlaybackService) {
@@ -721,17 +978,6 @@
     return `${m}/${d} ${hh}:${mm}`;
   }
 
-  function pushFocusRecord({ task, focusDurationMs }) {
-    focusRecords.push({
-      task: task || "",
-      focusDurationMs: focusDurationMs,
-      completedAt: new Date().toISOString(),
-    });
-    if (focusRecords.length > 50) {
-      focusRecords = focusRecords.slice(-50);
-    }
-  }
-
   function renderFocusRecords() {
     if (!focusRecordsEl) return;
     if (focusRecords.length === 0) {
@@ -740,24 +986,153 @@
     }
     const items = focusRecords.slice(-10).reverse().map((record) => {
       const task = escapeHtml(record.task || "\u672a\u547d\u540d\u4efb\u52a1");
-      const minutes = Math.round(record.focusDurationMs / 60000);
+      const durationMs = Number.isFinite(Number(record.actualDurationMs))
+        ? Number(record.actualDurationMs)
+        : Number(record.focusDurationMs) || 0;
+      const minutes = Math.round(durationMs / 60000);
       const time = formatRecordTime(record.completedAt);
+      const resultLabel = record.result === "interrupted"
+        ? "中断"
+        : record.result === "skipped"
+          ? "跳过"
+          : record.phase && record.phase !== "focus"
+            ? "休息"
+            : "完成";
       return `<li class="record">
         <span class="record-task">${task}</span>
-        <span class="record-duration">${minutes} \u5206\u949f</span>
+        <span class="record-duration">${resultLabel} · ${minutes} \u5206\u949f</span>
         <span class="record-time">${time}</span>
       </li>`;
     });
     focusRecordsEl.innerHTML = items.join("");
   }
 
+  function renderFocusStats() {
+    if (!focusStatsEl || !window.DeskpetFocusStatistics) return;
+    const stats = window.DeskpetFocusStatistics.summarizeFocusRecords(
+      focusRecords,
+      new Date(),
+      currentFocusSnapshot(),
+    );
+    const minutes = Math.round(stats.todayDurationMs / 60000);
+    const totalMinutes = Math.round(stats.totalDurationMs / 60000);
+    focusStatsEl.innerHTML = `<span><strong>${stats.todayCount}</strong> 今日次数</span>`
+      + `<span><strong>${minutes}</strong> 今日分钟</span>`
+      + `<span><strong>${totalMinutes}</strong> 累计分钟</span>`
+      + `<span><strong>${stats.streakDays}</strong> 连续天数</span>`
+      + `<span><strong>${stats.interruptedCount}</strong> 中断</span>`;
+  }
+
   function saveFocusSettings() {
     queueSettingsUpdate({
       focusDurationMinutes,
       breakDurationMinutes,
+      longBreakDurationMinutes,
+      focusRoundsBeforeLongBreak,
+      focusNotificationsEnabled,
+      focusSoundEnabled,
+      focusPetReactionsEnabled,
+      focusConfirmInterrupt,
+      focusSession: focusSessionSnapshot && focusSessionSnapshot.phase !== "idle"
+        ? focusSessionSnapshot
+        : null,
       pendingTaskName,
       focusRecords,
     });
+  }
+
+  function currentFocusSnapshot() {
+    if (focusSessionController) return focusSessionController.snapshot();
+    return {
+      phase: "idle",
+      status: "idle",
+      remainingMs: focusDurationMinutes * 60 * 1000,
+      taskName: "",
+      completedFocusRounds: 0,
+      roundsBeforeLongBreak: focusRoundsBeforeLongBreak,
+      suggestedBreakPhase: null,
+    };
+  }
+
+  function handleFocusSessionEvent(event) {
+    focusPetBridge.handleSessionEvent(event);
+    if ((event.type !== "phase-completed" && event.type !== "phase-completed-restored")
+      || !focusNotificationsEnabled) {
+      return;
+    }
+    const waitingForBreak = event.snapshot.phase === "waiting-for-break";
+    const title = waitingForBreak ? "本轮专注已完成" : "休息结束";
+    const body = waitingForBreak
+      ? "准备好后开始休息，下一阶段不会自动计时。"
+      : "准备好后开始下一轮专注。";
+    try {
+      Promise.resolve(window.deskpet.showFocusNotification?.({
+        title,
+        body,
+        silent: !focusSoundEnabled,
+      })).catch(() => null);
+    } catch (_error) {
+      // Desktop notifications are optional; the pet bubble remains available.
+    }
+  }
+
+  function startCurrentBreak() {
+    const snapshot = currentFocusSnapshot();
+    return snapshot.phase === "waiting-for-break"
+      ? focusSessionController?.startSuggestedBreak()
+      : focusSessionController?.startBreak({ taskName: pendingTaskName });
+  }
+
+  function interruptCurrentFocus() {
+    const snapshot = currentFocusSnapshot();
+    if (snapshot.phase !== "focus") {
+      return { success: false, code: "focus-not-active", message: "当前没有可提前结束的专注。" };
+    }
+    if (focusConfirmInterrupt && !window.confirm("提前结束会把本轮记录为中断，确定结束吗？")) {
+      return { success: false, code: "cancelled", cancelled: true };
+    }
+    return focusSessionController?.interruptFocus();
+  }
+
+  function configureFocusSession(loadedSettings = {}) {
+    focusRuntime?.destroy?.();
+    focusRuntime = new window.DeskpetFocusRuntime.FocusRuntime({
+      createController: () => new window.DeskpetFocusSession.FocusSessionController({
+        focusDurationMs: focusDurationMinutes * 60 * 1000,
+        shortBreakDurationMs: breakDurationMinutes * 60 * 1000,
+        longBreakDurationMs: longBreakDurationMinutes * 60 * 1000,
+        roundsBeforeLongBreak: focusRoundsBeforeLongBreak,
+        initialSession: loadedSettings.focusSession || null,
+        initialRecords: focusRecords,
+      }),
+      onPersist: ({ snapshot, records }) => {
+        focusSessionSnapshot = snapshot;
+        focusRecords = records.slice(-500);
+        saveFocusSettings();
+        renderFocusRecords();
+        renderFocusStats();
+        focusActive = snapshot.phase === "focus"
+          && (snapshot.status === "running" || snapshot.status === "paused");
+        walkMovementRunner.setReduced(focusActive);
+        updateFocusPanel();
+      },
+      onEvent: handleFocusSessionEvent,
+      onRestoredCompletion: (snapshot) => handleFocusSessionEvent({ type: "phase-completed-restored", snapshot }),
+    });
+    focusRuntime.load({ ...loadedSettings, focusRecords });
+    focusSessionController = focusRuntime.controller;
+    const restored = focusRuntime.snapshot();
+    focusSessionSnapshot = restored;
+    focusActive = restored.phase === "focus"
+      && (restored.status === "running" || restored.status === "paused");
+    walkMovementRunner.setReduced(focusActive);
+    updateFocusPanel();
+    if (restored.phase === "focus" && restored.status !== "waiting") {
+      focusPetBridge.handleSessionEvent({
+        type: restored.status === "paused" ? "phase-paused" : "focus-started",
+        snapshot: restored,
+      });
+    }
   }
 
   let pendingSettings = null;
@@ -803,6 +1178,7 @@
     if (clockEnabledInput) {
       clockEnabledInput.checked = clockEnabled;
     }
+    if (clockOpacityInput) clockOpacityInput.value = String(clockOpacityPercent);
     if (clockDisplayModeInput) {
       clockDisplayModeInput.value = clockDisplayMode;
     }
@@ -830,11 +1206,16 @@
     if (taskNameInput && document.activeElement !== taskNameInput) {
       taskNameInput.value = pendingTaskName;
     }
+    if (focusTaskSummary) {
+      focusTaskSummary.textContent = pendingTaskName || "未设置任务";
+    }
     setOutput(sizeOutput, sizePercent);
     setOutput(speedOutput, speedPercent);
     setOutput(opacityOutput, opacityPercent);
     setOutput(musicStatusOpacityOutput, musicStatusOpacityPercent);
+    setOutput(clockOpacityOutput, clockOpacityPercent);
     renderFocusRecords();
+    renderFocusStats();
     updateStatusPanel();
   }
 
@@ -899,14 +1280,51 @@
     }, Number.isFinite(durationMs) && durationMs > 0 ? durationMs : 1500);
   }
 
+  function pumpChatReplyBubble() {
+    if (!chatReplyBubble || chatBubbleActive || !chatBubbleQueue.length) return;
+    const next = chatBubbleQueue.shift();
+    chatBubbleActive = true;
+    chatReplyBubble.textContent = next.text;
+    chatReplyBubble.hidden = false;
+    requestAnimationFrame(() => {
+      chatReplyBubble.classList.add("is-visible");
+      refreshPetShape();
+    });
+    clearTimeout(chatBubbleTimer);
+    chatBubbleTimer = setTimeout(() => {
+      chatReplyBubble.classList.remove("is-visible");
+      chatBubbleTimer = setTimeout(() => {
+        chatReplyBubble.hidden = true;
+        chatBubbleActive = false;
+        refreshPetShape();
+        pumpChatReplyBubble();
+      }, 250);
+    }, next.durationMs);
+  }
+
+  function showChatReplyBubble(text, durationMs = 4500) {
+    const content = typeof text === "string" ? text.trim() : "";
+    if (!content || !chatReplyBubble) return;
+    chatBubbleQueue.push({
+      text: content,
+      durationMs: Number.isFinite(durationMs) && durationMs > 0 ? durationMs : 4500,
+    });
+    chatBubbleQueue = chatBubbleQueue.slice(-3);
+    pumpChatReplyBubble();
+  }
+
   function applyOpacity() {
-    pet.style.opacity = String(Math.max(0.2, Math.min(1, opacityPercent / 100)));
+    applyRuntimeStyle(pet, "pet-presentation", {
+      opacity: String(Math.max(0.2, Math.min(1, opacityPercent / 100))),
+    });
   }
 
   function applyWalkFacing() {
     const facingLeft = animation.action === "walk" && walkMovementRunner.direction() < 0;
     pet.classList.toggle("is-facing-left", facingLeft);
-    pet.style.transform = facingLeft ? "scaleX(-1)" : "none";
+    applyRuntimeStyle(pet, "pet-facing", {
+      transform: facingLeft ? "scaleX(-1)" : "none",
+    });
   }
 
   // Position the bubble + clock widgets around the current sprite. The clock
@@ -915,6 +1333,7 @@
   // instead of covering the face.
   const WIDGET_LAYOUT = {
     bubble: { width: 220, height: 84 },
+    chatBubble: { width: 300, height: 132 },
     clock:  { width: 76, height: 50 },
   };
   function syncWidgetPositions(imageData) {
@@ -965,7 +1384,7 @@
       clockAnchor = { side: "fallback-centre", x: petRect.width / 2, y: petRect.height * 0.38 };
     }
 
-    function place(el, anchor) {
+    function place(el, anchor, { yOffset = 0 } = {}) {
       if (!el) return;
       let stageX;
       let stageY;
@@ -973,32 +1392,45 @@
         // CSS-pixel centre of pet rect. x is the centre (CSS handles translateX),
         // y is the relative top within the pet rect.
         stageX = petRect.left - stageRect.left + anchor.x;
-        stageY = petRect.top - stageRect.top + anchor.y;
+        stageY = petRect.top - stageRect.top + anchor.y + yOffset;
       } else if (anchor.side === "fallback-top-right") {
         stageX = petRect.left - stageRect.left + anchor.x;
-        stageY = petRect.top - stageRect.top + anchor.y;
+        stageY = petRect.top - stageRect.top + anchor.y + yOffset;
       } else if (String(anchor.side).startsWith("outside-")) {
         // Pet-relative outside corner: x is widget centre (CSS translates),
         // y is the widget's top-left in CSS pixels.
         stageX = petRect.left - stageRect.left + anchor.x;
-        stageY = petRect.top - stageRect.top + anchor.y;
+        stageY = petRect.top - stageRect.top + anchor.y + yOffset;
       } else if (anchor.side === "pet-top-right") {
         // Bubble-specific image-space anchor. x/y are the widget's top-left in
         // image pixels, not a centered point.
         stageX = petRect.left - stageRect.left + offsetX + anchor.x * fitScale;
-        stageY = petRect.top - stageRect.top + offsetY + anchor.y * fitScale;
+        stageY = petRect.top - stageRect.top + offsetY + anchor.y * fitScale + yOffset;
       } else {
         // Image-space anchor: x = widget centre in image px, y = widget top in image px.
         const imgX = anchor.x;
         const imgY = anchor.y;
         stageX = petRect.left - stageRect.left + offsetX + imgX * fitScale;
-        stageY = petRect.top - stageRect.top + offsetY + imgY * fitScale;
+        stageY = petRect.top - stageRect.top + offsetY + imgY * fitScale + yOffset;
       }
-      el.style.left = `${stageX}px`;
-      el.style.top = `${stageY}px`;
+      const measured = el.getBoundingClientRect();
+      const width = measured.width || 220;
+      const height = measured.height || 84;
+      const stageWidth = stage.clientWidth || 512;
+      const stageHeight = stage.clientHeight || 512;
+      stageX = Math.max(4, Math.min(stageWidth - width - 4, stageX));
+      stageY = Math.max(4, Math.min(stageHeight - height - 4, stageY));
+      const styleId = el === moodBubble ? "bubble-position" : el === clockEl ? "clock-anchor" : "widget-position";
+      applyRuntimeStyle(el, styleId, {
+        left: `${stageX}px`,
+        top: `${stageY}px`,
+      });
     }
 
-    place(moodBubble, bubbleAnchor);
+    // Both bubble types use the same top-right anchor. The short status bubble
+    // must not be pushed below the sprite when no chat reply is visible.
+    place(moodBubble, bubbleAnchor, { yOffset: 0 });
+    place(chatReplyBubble, bubbleAnchor, { yOffset: 0 });
     if (isDraggingClock) {
       // Mid-drag: the drag handler owns clockEl.style. Don't touch
       // it — that was the source of the strobe between the drag
@@ -1006,7 +1438,10 @@
       coordinatePinnedWidgetPositions();
       return;
     }
-    if (clockPosition) {
+    if (!clockEnabled || clockDisplayMode !== "floating") {
+      clockEl.hidden = true;
+      clockEl.classList.remove("is-visible");
+    } else if (clockPosition) {
       // User dragged the clock — keep it pinned to the saved position
       // instead of letting the auto-anchor track the pet's bbox.
       applyClockPosition();
@@ -1021,7 +1456,19 @@
       return;
     }
 
-    pet.src = animation.currentFramePath();
+    const frameSrc = animation.currentFramePath();
+    const frameReady = typeof framePreloader.isReady === "function"
+      ? framePreloader.isReady(frameSrc)
+      : framePreloader.has(frameSrc);
+    if (frameReady) {
+      pet.src = frameSrc;
+    } else {
+      framePreloader.preload(frameSrc).then((ready) => {
+        if (!ready || holdVisualLock.isLocked() || animation.currentFramePath() !== frameSrc) return;
+        pet.src = frameSrc;
+        refreshPetShape();
+      });
+    }
     primeActionShape(animation.action);
     pet.dataset.action = animation.action;
     visualStyle.applyPetVisualStyle(pet, {
@@ -1113,6 +1560,7 @@
       mouseReactEnabled,
       dailyGreetingEnabled,
       clockEnabled,
+      clockOpacityPercent,
       clockDisplayMode,
       focusIndicatorEnabled,
       focusDisplayMode,
@@ -1163,7 +1611,7 @@
         return;
       }
 
-      const result = petState.tick();
+      const result = petState.tick({ focusActive });
       savePetState();
       if (result.action === "sleep" && animation.action !== "sleep") {
         showMoodBubble("sleep");
@@ -1178,11 +1626,16 @@
   }
 
   function runCommand(command) {
+    if (command === "focus:reconcile") {
+      focusSessionController?.tick();
+      updateFocusPanel();
+      return;
+    }
     if (command.startsWith("chat-reply-bubble:")) {
       const encoded = command.slice("chat-reply-bubble:".length);
       try {
         const text = decodeURIComponent(encoded);
-        if (text) showCustomBubble(text, 4500);
+        if (text) showChatReplyBubble(text, 4500);
       } catch (_error) {
         // Bad encoding 闂?silently ignore.
       }
@@ -1255,27 +1708,6 @@
       return;
     }
 
-    if (command === "settings:open-records") {
-      settingsPanel.hidden = false;
-      syncSettingsPanel();
-      requestAnimationFrame(() => {
-        if (settingsPanel) {
-          settingsPanel.scrollTop = settingsPanel.scrollHeight;
-        }
-        if (focusRecordsEl) {
-          focusRecordsEl.scrollTop = focusRecordsEl.scrollHeight;
-        }
-        const section = document.querySelector(".focus-records-section");
-        if (section) {
-          section.scrollIntoView({ behavior: "smooth", block: "end" });
-          section.classList.remove("is-highlighted");
-          void section.offsetWidth;
-          section.classList.add("is-highlighted");
-        }
-      });
-      return;
-    }
-
     if (command.startsWith("settings:")) {
       try {
         const loadedSettings = JSON.parse(decodeURIComponent(command.slice("settings:".length)));
@@ -1287,6 +1719,7 @@
         mouseReactEnabled = loadedSettings.mouseReactEnabled !== false;
         dailyGreetingEnabled = loadedSettings.dailyGreetingEnabled !== false;
         clockEnabled = loadedSettings.clockEnabled !== false;
+        clockOpacityPercent = normalizeMusicStatusOpacity(loadedSettings.clockOpacityPercent);
         clockDisplayMode = normalizeWidgetDisplayMode(loadedSettings.clockDisplayMode);
         focusIndicatorEnabled = loadedSettings.focusIndicatorEnabled !== false;
         focusDisplayMode = normalizeWidgetDisplayMode(loadedSettings.focusDisplayMode);
@@ -1295,13 +1728,19 @@
         musicStatusOpacityPercent = normalizeMusicStatusOpacity(loadedSettings.musicStatusOpacityPercent);
         focusDurationMinutes = clampFocusMinutes(loadedSettings.focusDurationMinutes, 25, 1, 180);
         breakDurationMinutes = clampFocusMinutes(loadedSettings.breakDurationMinutes, 5, 1, 60);
+        longBreakDurationMinutes = clampFocusMinutes(loadedSettings.longBreakDurationMinutes, 15, 1, 120);
+        focusRoundsBeforeLongBreak = clampFocusMinutes(loadedSettings.focusRoundsBeforeLongBreak, 4, 1, 12);
+        focusNotificationsEnabled = loadedSettings.focusNotificationsEnabled !== false;
+        focusSoundEnabled = loadedSettings.focusSoundEnabled === true;
+        focusPetReactionsEnabled = loadedSettings.focusPetReactionsEnabled !== false;
+        focusConfirmInterrupt = loadedSettings.focusConfirmInterrupt !== false;
         pendingTaskName = typeof loadedSettings.pendingTaskName === "string"
           ? loadedSettings.pendingTaskName.slice(0, 60)
           : "";
         focusRecords = Array.isArray(loadedSettings.focusRecords)
           ? loadedSettings.focusRecords
               .filter((r) => r && typeof r === "object" && Number.isFinite(r.focusDurationMs))
-              .slice(-50)
+              .slice(-500)
           : [];
         // User-saved widget positions. null means "no saved position"
         // — let the auto-anchor place the clock and let the music
@@ -1326,6 +1765,7 @@
           : null;
         if (musicStatusPosition) applyMusicStatusPosition();
         else clearMusicStatusPosition();
+        loadWidgetRuntime(loadedSettings);
         applyMusicStatusPresentation();
         applyPetMouseEventsPolicy();
         applyMusicLyricStyle(loadedSettings.musicLyricStyle);
@@ -1333,10 +1773,7 @@
           window.DeskpetMusicPanel.setPosition(loadedSettings.musicPanelPosition || null);
         }
         animation.setSpeedMultiplier(settings.speedPercentToMultiplier(speedPercent));
-        focusTimer.setDurations({
-          focusDurationMs: focusDurationMinutes * 60 * 1000,
-          breakDurationMs: breakDurationMinutes * 60 * 1000,
-        });
+        configureFocusSession(loadedSettings);
         updateClockWidget();
         syncSettingsPanel();
         renderFrame();
@@ -1402,15 +1839,23 @@
       autoWalkEnabled = true;
       focusDurationMinutes = 25;
       breakDurationMinutes = 5;
+      longBreakDurationMinutes = 15;
+      focusRoundsBeforeLongBreak = 4;
+      focusNotificationsEnabled = true;
+      focusSoundEnabled = false;
+      focusPetReactionsEnabled = true;
+      focusConfirmInterrupt = true;
       pendingTaskName = "";
       focusRecords = [];
       clockEnabled = true;
+      clockOpacityPercent = 100;
       clockDisplayMode = "floating";
       focusIndicatorEnabled = true;
       focusDisplayMode = "floating";
       petClickThroughEnabled = false;
       musicStatusClickThroughEnabled = false;
       musicStatusOpacityPercent = 100;
+      configureFocusSession({ focusSession: null });
       animation.setSpeedMultiplier(1);
       petState.loadState({
         mood: 50,
@@ -1427,9 +1872,17 @@
         autoWalkEnabled: true,
         focusDurationMinutes: 25,
         breakDurationMinutes: 5,
+        longBreakDurationMinutes: 15,
+        focusRoundsBeforeLongBreak: 4,
+        focusNotificationsEnabled: true,
+        focusSoundEnabled: false,
+        focusPetReactionsEnabled: true,
+        focusConfirmInterrupt: true,
+        focusSession: null,
         pendingTaskName: "",
         focusRecords: [],
         clockEnabled: true,
+        clockOpacityPercent: 100,
         clockDisplayMode: "floating",
         focusIndicatorEnabled: true,
         focusDisplayMode: "floating",
@@ -1540,84 +1993,47 @@
     }
 
     if (command === "focus:start") {
-      const durationMs = focusDurationMinutes * 60 * 1000;
-      currentFocusTaskName = (taskNameInput && taskNameInput.value) ? taskNameInput.value : pendingTaskName;
-      currentFocusDurationMs = durationMs;
-      focusActive = true;
-      walkMovementRunner.setReduced(true);
-      focusTimer.startFocus(durationMs);
-      showMoodBubble("focus");
-      updateFocusPanel();
+      focusSessionController?.startFocus({
+        taskName: (taskNameInput && taskNameInput.value) ? taskNameInput.value : pendingTaskName,
+      });
       return;
     }
 
     if (command === "break:start") {
-      const durationMs = breakDurationMinutes * 60 * 1000;
-      focusActive = false;
-      walkMovementRunner.setReduced(false);
-      focusTimer.startBreak(durationMs);
-      showCustomBubble("\u4f11\u606f\u4e00\u4e0b\u3002");
-      updateFocusPanel();
+      startCurrentBreak();
       return;
     }
 
     if (command === "focus:toggle-pause") {
-      const phase = focusTimer.phase;
-      if (phase === "focus" || phase === "break") {
-        focusTimer.pause();
-        showCustomBubble(phase === "focus" ? "\u6682\u505c\u4e00\u4e0b\u3002" : "\u4f11\u606f\u6682\u505c\u3002");
-      } else if (phase === "paused-focus" || phase === "paused-break") {
-        focusTimer.resume();
-        showCustomBubble("\u7ee7\u7eed\u3002");
-      }
-      updateFocusPanel();
+      const snapshot = currentFocusSnapshot();
+      const result = snapshot.status === "paused"
+        ? focusSessionController?.resume()
+        : focusSessionController?.pause();
+      if (result && !result.success) showCustomBubble(result.message);
       return;
     }
 
     if (command === "focus:reset") {
-      focusActive = false;
-      walkMovementRunner.setReduced(false);
-      focusTimer.reset();
+      focusSessionController?.reset();
       showCustomBubble("\u5df2\u91cd\u7f6e\u3002");
-      updateFocusPanel();
       return;
     }
 
     if (command === "focus:end") {
-      const phase = focusTimer.phase;
-      if (phase === "focus" || phase === "paused-focus") {
-        const total = currentFocusDurationMs > 0
-          ? currentFocusDurationMs
-          : focusDurationMinutes * 60 * 1000;
-        const elapsed = Math.max(0, total - focusTimer.remainingMs);
-        if (elapsed >= 60 * 1000) {
-          pushFocusRecord({
-            task: currentFocusTaskName,
-            focusDurationMs: elapsed,
-          });
-          saveFocusSettings();
-          renderFocusRecords();
-          showCustomBubble(`\u5df2\u8bb0\u5f55 ${Math.round(elapsed / 60000)} \u5206\u949f\u3002`);
-        } else {
-          showCustomBubble("\u65f6\u95f4\u592a\u77ed\uff0c\u4e0d\u8bb0\u5f55\u3002");
-        }
-      } else if (phase === "break" || phase === "paused-break") {
-        showCustomBubble("\u5df2\u7ed3\u675f\u4f11\u606f\u3002");
-      } else {
-        return;
-      }
-      focusActive = false;
-      walkMovementRunner.setReduced(false);
-      currentFocusTaskName = "";
-      currentFocusDurationMs = 0;
-      focusTimer.reset();
-      updateFocusPanel();
+      const snapshot = currentFocusSnapshot();
+      const result = snapshot.phase === "focus"
+        ? interruptCurrentFocus()
+        : snapshot.phase.includes("break") || snapshot.phase === "waiting-for-break"
+          ? focusSessionController?.skipBreak()
+          : null;
+      if (result && !result.success && !result.cancelled) showCustomBubble(result.message);
       return;
     }
 
     if (command === "task:clear") {
       pendingTaskName = "";
       if (taskNameInput) taskNameInput.value = "";
+      if (focusTaskSummary) focusTaskSummary.textContent = "未设置任务";
       saveFocusSettings();
       showCustomBubble("\u5df2\u6e05\u7a7a\u4efb\u52a1\u3002");
       return;
@@ -1633,6 +2049,7 @@
       }
       pendingTaskName = name.trim();
       if (taskNameInput) taskNameInput.value = pendingTaskName;
+      if (focusTaskSummary) focusTaskSummary.textContent = pendingTaskName || "未设置任务";
       saveFocusSettings();
       showCustomBubble(pendingTaskName ? `\u4efb\u52a1\uff1a${pendingTaskName}` : "\u5df2\u6e05\u7a7a\u4efb\u52a1\u3002");
       return;
@@ -1668,7 +2085,7 @@
 
     event.preventDefault();
     stage.setPointerCapture(event.pointerId);
-    drag.pointerDown(event);
+    petInteractionRuntime.pointerDown(event);
     holdVisualLock.lock();
     clearInterval(frameTimer);
     clearTimeout(blinkTimer);
@@ -1676,7 +2093,7 @@
   });
 
   stage.addEventListener("pointermove", (event) => {
-    const result = drag.pointerMove(event);
+    const result = petInteractionRuntime.pointerMove(event);
 
     if (result.type === "drag-start") {
       petState.wake();
@@ -1685,7 +2102,6 @@
       if (pointerPolicy.visualActionForPointerResult(result) === "drag") {
         clearTimeout(blinkTimer);
         clearInterval(idleTimer);
-        play("drag");
       }
       window.deskpet.moveBy(result.dx, result.dy);
       return;
@@ -1713,18 +2129,12 @@
       stage.releasePointerCapture(event.pointerId);
     }
 
-    const result = drag.pointerUp();
+    const result = petInteractionRuntime.pointerUp(event);
     holdVisualLock.unlock();
     const releaseAction = pointerPolicy.visualActionForPointerResult(result);
-    if (releaseAction === "tap") {
-      const feedback = petState.interact("tap");
-      savePetState();
-      showMoodBubble(feedback.action);
-      play(feedback.action);
-    } else if (releaseAction === "idle") {
+    if (releaseAction === "idle") {
       petState.wake();
       savePetState();
-      recoverAmbientAction();
     }
 
     scheduleBlink();
@@ -1743,8 +2153,37 @@
     event.stopPropagation();
   });
   musicStatusBar?.addEventListener("pointerdown", (event) => {
+    const progress = event.target.closest?.(".music-status-bar__progress");
+    if (progress) {
+      const position = progressPositionFromEvent(event);
+      if (position) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        musicProgressSeeking = { pointerId: event.pointerId, duration: position.duration, seconds: position.seconds };
+        musicStatusBar.setPointerCapture?.(event.pointerId);
+        updateMusicProgressPreview(position.seconds, position.duration);
+        return;
+      }
+    }
     event.stopPropagation();
   });
+  musicStatusBar?.addEventListener("pointermove", (event) => {
+    if (musicProgressSeeking && event.pointerId === musicProgressSeeking.pointerId) {
+      const position = progressPositionFromEvent(event);
+      if (position) {
+        musicProgressSeeking.seconds = position.seconds;
+        updateMusicProgressPreview(position.seconds, position.duration);
+      }
+      return;
+    }
+    const position = progressPositionFromEvent(event);
+    if (position) {
+      const label = position.progress.querySelector(".music-status-bar__progress-time");
+      if (label) label.textContent = `${formatMusicTime(position.seconds)} / ${formatMusicTime(position.duration)}`;
+    }
+  });
+  musicStatusBar?.addEventListener("pointerup", (event) => finishMusicProgressSeek(event));
+  musicStatusBar?.addEventListener("pointercancel", (event) => finishMusicProgressSeek(event, { commit: false }));
   musicStatusBar?.addEventListener("contextmenu", (event) => {
     event.stopPropagation();
   });
@@ -1789,9 +2228,9 @@
   focusDurationInput?.addEventListener("change", () => {
     focusDurationMinutes = clampFocusMinutes(focusDurationInput.value, 25, 1, 180);
     focusDurationInput.value = String(focusDurationMinutes);
-    focusTimer.setDurations({ focusDurationMs: focusDurationMinutes * 60 * 1000 });
+    configureFocusSession({ focusSession: focusSessionSnapshot });
     saveFocusSettings();
-    if (focusTimer.phase === "idle") {
+    if (currentFocusSnapshot().phase === "idle") {
       updateFocusPanel();
     }
   });
@@ -1799,23 +2238,30 @@
   breakDurationInput?.addEventListener("change", () => {
     breakDurationMinutes = clampFocusMinutes(breakDurationInput.value, 5, 1, 60);
     breakDurationInput.value = String(breakDurationMinutes);
-    focusTimer.setDurations({ breakDurationMs: breakDurationMinutes * 60 * 1000 });
+    configureFocusSession({ focusSession: focusSessionSnapshot });
     saveFocusSettings();
   });
 
   taskNameInput?.addEventListener("input", () => {
     pendingTaskName = taskNameInput.value.slice(0, 60);
+    if (focusTaskSummary) focusTaskSummary.textContent = pendingTaskName || "未设置任务";
     saveFocusSettings();
   });
 
   focusRecordsClear?.addEventListener("click", () => {
-    focusRecords = [];
-    saveFocusSettings();
-    renderFocusRecords();
+    focusSessionController?.clearRecords();
   });
 
   clockEnabledInput?.addEventListener("change", () => {
     clockEnabled = clockEnabledInput.checked;
+    updateClockWidget();
+    saveBehaviorSettings();
+  });
+
+  clockOpacityInput?.addEventListener("input", () => {
+    clockOpacityPercent = normalizeMusicStatusOpacity(clockOpacityInput.value);
+    clockOpacityInput.value = String(clockOpacityPercent);
+    setOutput(clockOpacityOutput, clockOpacityPercent);
     updateClockWidget();
     saveBehaviorSettings();
   });
@@ -1867,8 +2313,8 @@
       pendingTaskName = task;
       if (taskNameInput) {
         taskNameInput.value = task;
-        taskNameInput.focus();
       }
+      if (focusTaskSummary) focusTaskSummary.textContent = task || "未设置任务";
       saveFocusSettings();
     });
   });
@@ -1877,102 +2323,83 @@
     flushPendingSettings();
   });
 
+  configureFocusSession({});
+
   focusStart?.addEventListener("click", () => {
-    const durationMs = focusDurationMinutes * 60 * 1000;
-    currentFocusTaskName = taskNameInput ? taskNameInput.value : pendingTaskName;
-    currentFocusDurationMs = durationMs;
-    focusActive = true;
-    walkMovementRunner.setReduced(true);
-    focusTimer.startFocus(durationMs);
-    showMoodBubble("focus");
-    updateFocusPanel();
+    focusSessionController?.startFocus({
+      taskName: taskNameInput ? taskNameInput.value : pendingTaskName,
+    });
   });
 
   breakStart?.addEventListener("click", () => {
-    const durationMs = breakDurationMinutes * 60 * 1000;
-    focusActive = false;
-    walkMovementRunner.setReduced(false);
-    focusTimer.startBreak(durationMs);
-    showCustomBubble("\u4f11\u606f\u4e00\u4e0b\u3002");
-    updateFocusPanel();
+    startCurrentBreak();
   });
 
   focusPause?.addEventListener("click", () => {
-    const phase = focusTimer.phase;
-    if (phase === "focus" || phase === "break") {
-      focusTimer.pause();
-    } else if (phase === "paused-focus" || phase === "paused-break") {
-      focusTimer.resume();
-    }
-    updateFocusPanel();
+    const snapshot = currentFocusSnapshot();
+    if (snapshot.status === "paused") focusSessionController?.resume();
+    else focusSessionController?.pause();
   });
 
   focusReset?.addEventListener("click", () => {
-    focusActive = false;
-    walkMovementRunner.setReduced(false);
-    focusTimer.reset();
-    updateFocusPanel();
+    focusSessionController?.reset();
   });
 
-  focusTimer.onFocusEnd(() => {
-    focusActive = false;
-    walkMovementRunner.setReduced(false);
-    pushFocusRecord({
-      task: currentFocusTaskName,
-      focusDurationMs: currentFocusDurationMs,
-    });
-    currentFocusTaskName = "";
-    currentFocusDurationMs = 0;
-    saveFocusSettings();
-    renderFocusRecords();
-    showMoodBubble("happy");
-    play("happy");
-    updateFocusPanel();
-  });
-
-  focusTimer.onBreakEnd(() => {
-    showMoodBubble("tap");
-    play("tap");
-    updateFocusPanel();
+  focusSkip?.addEventListener("click", () => {
+    const snapshot = currentFocusSnapshot();
+    if (snapshot.phase === "focus") interruptCurrentFocus();
+    else focusSessionController?.skipBreak();
   });
 
   function updateFocusPanel() {
     if (!focusPhaseEl || !focusRemainingEl) return;
+    const snapshot = currentFocusSnapshot();
     const labels = {
       idle: "\u7a7a\u95f2",
       focus: "\u4e13\u6ce8\u4e2d",
-      break: "\u4f11\u606f\u4e2d",
-      "paused-focus": "\u5df2\u6682\u505c(\u4e13\u6ce8)",
-      "paused-break": "\u5df2\u6682\u505c(\u4f11\u606f)",
+      "short-break": "\u77ed\u4f11\u606f",
+      "long-break": "\u957f\u4f11\u606f",
+      "waiting-for-break": "\u7b49\u5f85\u4f11\u606f",
+      "waiting-for-focus": "\u7b49\u5f85\u4e0b\u4e00\u8f6e",
     };
-    focusPhaseEl.textContent = labels[focusTimer.phase] || focusTimer.phase;
-    const total = Math.max(0, Math.ceil(focusTimer.remainingMs / 1000));
+    const pausedLabel = snapshot.status === "paused" ? "\u5df2\u6682\u505c · " : "";
+    focusPhaseEl.textContent = `${pausedLabel}${labels[snapshot.phase] || snapshot.phase}`;
+    const total = Math.max(0, Math.ceil(snapshot.remainingMs / 1000));
     const mm = String(Math.floor(total / 60)).padStart(2, "0");
     const ss = String(total % 60).padStart(2, "0");
-    focusRemainingEl.textContent = `${mm}:${ss}`;
-    if (focusStart) focusStart.classList.toggle("is-active", focusTimer.phase === "focus" || focusTimer.phase === "paused-focus");
-    if (breakStart) breakStart.classList.toggle("is-active", focusTimer.phase === "break" || focusTimer.phase === "paused-break");
-    if (focusPause) focusPause.classList.toggle("is-active", focusTimer.phase === "paused-focus" || focusTimer.phase === "paused-break");
-    const active = focusTimer.phase !== "idle";
+    focusRemainingEl.textContent = snapshot.status === "waiting" ? "\u5f85\u786e\u8ba4" : `${mm}:${ss}`;
+    const isFocus = snapshot.phase === "focus";
+    const isBreak = snapshot.phase === "short-break" || snapshot.phase === "long-break";
+    const timed = isFocus || isBreak;
+    const active = snapshot.phase !== "idle";
+    if (focusStart) focusStart.classList.toggle("is-active", isFocus);
+    if (breakStart) breakStart.classList.toggle("is-active", isBreak);
+    if (focusPause) focusPause.classList.toggle("is-active", snapshot.status === "paused");
     if (focusStart) {
-      focusStart.disabled = active;
-      focusStart.setAttribute("aria-pressed", focusTimer.phase === "focus" || focusTimer.phase === "paused-focus" ? "true" : "false");
+      focusStart.disabled = !(snapshot.phase === "idle" || snapshot.phase === "waiting-for-focus");
+      focusStart.setAttribute("aria-pressed", isFocus ? "true" : "false");
     }
     if (breakStart) {
-      breakStart.disabled = active;
-      breakStart.setAttribute("aria-pressed", focusTimer.phase === "break" || focusTimer.phase === "paused-break" ? "true" : "false");
+      breakStart.disabled = !(snapshot.phase === "idle" || snapshot.phase === "waiting-for-break");
+      breakStart.setAttribute("aria-pressed", isBreak ? "true" : "false");
     }
     if (focusPause) {
-      focusPause.disabled = !active;
-      focusPause.setAttribute("aria-pressed", focusTimer.phase === "paused-focus" || focusTimer.phase === "paused-break" ? "true" : "false");
+      focusPause.disabled = !timed;
+      focusPause.setAttribute("aria-pressed", snapshot.status === "paused" ? "true" : "false");
     }
     if (focusReset) focusReset.disabled = !active;
+    if (focusSkip) {
+      focusSkip.disabled = !(isFocus || isBreak || snapshot.phase === "waiting-for-break");
+      focusSkip.textContent = isFocus ? "\u7ed3\u675f\u4e13\u6ce8" : "\u8df3\u8fc7\u4f11\u606f";
+    }
+    renderFocusStats();
     updateFocusIndicator();
   }
 
   function updateFocusIndicator() {
     if (!focusIndicator) return;
-    const phase = focusTimer.phase;
+    const snapshot = currentFocusSnapshot();
+    const phase = snapshot.phase;
     if (!focusIndicatorEnabled || focusDisplayMode !== "floating" || phase === "idle") {
       focusIndicator.hidden = true;
       focusIndicator.className = "focus-indicator";
@@ -1981,16 +2408,23 @@
       refreshPetShape();
       return;
     }
-    const total = Math.max(0, Math.ceil(focusTimer.remainingMs / 1000));
+    const total = Math.max(0, Math.ceil(snapshot.remainingMs / 1000));
     const mm = String(Math.floor(total / 60)).padStart(2, "0");
     const ss = String(total % 60).padStart(2, "0");
-    const isFocus = phase === "focus" || phase === "paused-focus";
-    const isBreak = phase === "break" || phase === "paused-break";
-    const isPaused = phase === "paused-focus" || phase === "paused-break";
-    const icon = isFocus ? "T" : "B";
-    const label = isFocus ? "\u4e13\u6ce8" : "\u4f11\u606f";
+    const isFocus = phase === "focus";
+    const isBreak = phase === "short-break" || phase === "long-break";
+    const isWaiting = snapshot.status === "waiting";
+    const isPaused = snapshot.status === "paused";
+    const icon = isWaiting ? "\u2713" : isFocus ? "T" : "B";
+    const label = phase === "long-break"
+      ? "\u957f\u4f11\u606f"
+      : isBreak
+        ? "\u4f11\u606f"
+        : isWaiting
+          ? "\u5f85\u786e\u8ba4"
+          : "\u4e13\u6ce8";
     focusIndicator.className = `focus-indicator${isFocus ? " is-focus" : ""}${isBreak ? " is-break" : ""}${isPaused ? " is-paused" : ""}`;
-    focusIndicator.innerHTML = `<span class="focus-indicator__icon">${icon}</span><span class="focus-indicator__label">${label}${isPaused ? "(\u5df2\u6682\u505c)" : ""}</span><span class="focus-indicator__time">${mm}:${ss}</span>`;
+    focusIndicator.innerHTML = `<span class="focus-indicator__icon">${icon}</span><span class="focus-indicator__label">${label}${isPaused ? "(\u5df2\u6682\u505c)" : ""}</span><span class="focus-indicator__time">${isWaiting ? `${snapshot.completedFocusRounds}/${snapshot.roundsBeforeLongBreak}` : `${mm}:${ss}`}</span>`;
     focusIndicator.hidden = false;
     if (focusIndicatorPosition) applyFocusIndicatorPosition();
     setMusicStatus(musicStatusState, { playing: musicStatusPlaying });
@@ -2002,103 +2436,13 @@
   });
 
   setInterval(() => {
-    focusTimer.tick();
+    focusSessionController?.tick();
     updateFocusPanel();
   }, 1000);
 
   window.deskpet.onCommand(runCommand);
 
-  // Make the clock draggable. The user can grab it to pin it
-  // somewhere it doesn't overlap the pet's body; the saved position
-  // is persisted via bridge.updateSettings and reapplied on the next
-  // launch through the settings: command.
-  if (clockEl && window.DeskpetWidgetDrag && typeof window.DeskpetWidgetDrag.attachWidgetDrag === "function") {
-    window.DeskpetWidgetDrag.attachWidgetDrag(clockEl, {
-      threshold: 4,
-      onStart: () => {
-        isDraggingClock = true;
-        clockEl.classList.add("is-dragging");
-      },
-      onMove: ({ x, y }) => {
-        // x, y here are the *visual* top-left (drag helper reads
-        // getBoundingClientRect). Convert to CSS left by adding
-        // half the clock's width so the CSS translateX(-50%)
-        // centering lines up with the user's drag.
-        const clamped = clampClockPosition({ x, y });
-        clockEl.style.left = `${visualToCssLeft(clamped.x)}px`;
-        clockEl.style.top = `${clamped.y}px`;
-        clockEl.style.right = "auto";
-      },
-      onEnd: ({ x, y }) => {
-        clockEl.classList.remove("is-dragging");
-        const clamped = clampClockPosition({ x, y });
-        // Update clockPosition BEFORE clearing the drag flag so the
-        // next syncWidgetPositions (which fires on the next animation
-        // frame) sees the new value and pins the clock there.
-        clockPosition = clamped;
-        isDraggingClock = false;
-        if (typeof bridge.updateSettings === "function") {
-          bridge.updateSettings({ clockPosition: clamped }).catch(() => {});
-        }
-        refreshPetShape();
-      },
-    });
-  }
-
-  if (focusIndicator && window.DeskpetWidgetDrag && typeof window.DeskpetWidgetDrag.attachWidgetDrag === "function") {
-    window.DeskpetWidgetDrag.attachWidgetDrag(focusIndicator, {
-      threshold: 4,
-      onStart: () => {
-        isDraggingFocus = true;
-        focusIndicator.classList.add("is-dragging");
-      },
-      onMove: ({ x, y }) => {
-        const clamped = clampStageWidgetPosition({ x, y }, focusIndicator, 126, 34);
-        focusIndicator.style.left = `${clamped.x}px`;
-        focusIndicator.style.top = `${clamped.y}px`;
-        focusIndicator.style.right = "auto";
-        focusIndicator.style.bottom = "auto";
-      },
-      onEnd: ({ x, y }) => {
-        const clamped = clampStageWidgetPosition({ x, y }, focusIndicator, 126, 34);
-        focusIndicatorPosition = clamped;
-        isDraggingFocus = false;
-        focusIndicator.classList.remove("is-dragging");
-        if (typeof bridge.updateSettings === "function") {
-          bridge.updateSettings({ focusIndicatorPosition: clamped }).catch(() => {});
-        }
-        refreshPetShape();
-      },
-    });
-  }
-
-  if (musicStatusBar && window.DeskpetWidgetDrag && typeof window.DeskpetWidgetDrag.attachWidgetDrag === "function") {
-    window.DeskpetWidgetDrag.attachWidgetDrag(musicStatusBar, {
-      threshold: 4,
-      onStart: () => {
-        isDraggingMusic = true;
-        musicStatusBar.classList.add("is-dragging");
-      },
-      onMove: ({ x, y }) => {
-        const clamped = clampMusicStatusPosition({ x, y });
-        musicStatusBar.style.left = `${clamped.x}px`;
-        musicStatusBar.style.top = `${clamped.y}px`;
-        musicStatusBar.style.right = "auto";
-        musicStatusBar.style.bottom = "auto";
-      },
-      onEnd: ({ x, y }) => {
-        const clamped = clampMusicStatusPosition({ x, y });
-        musicStatusPosition = clamped;
-        isDraggingMusic = false;
-        musicStatusBar.classList.remove("is-dragging");
-        if (typeof bridge.updateSettings === "function") {
-          bridge.updateSettings({ musicStatusPosition: clamped }).catch(() => {});
-        }
-        refreshPetShape();
-      },
-    });
-  }
-
+  loadWidgetRuntime({});
   syncSettingsPanel();
   window.DeskpetMusicPlaybackService?.connectPlaybackState?.(bridge).then(() => {
     renderMusicStatus();

@@ -1,14 +1,46 @@
 (function attachMusicPlaybackService(root) {
+  const mediaError = typeof require === "function"
+    ? require("../music/media-error")
+    : (root.DeskpetMediaError || {});
   const DIRECT_AUDIO_FAILURE_COOLDOWN_MS = 120000;
   const HISTORY_MAX = 50;
   let directAudioDisabledUntil = 0;
   let currentQueue = [];
   let currentQueueIndex = -1;
   let currentQueuePlaylistId = "";
+  let shuffleQueueSignature = "";
+  let shuffleOrder = [];
+  let shuffleCursor = -1;
   let playMode = "sequence";
   let history = [];
   let stateBridge = null;
   let unsubscribeState = null;
+  const stateListeners = new Set();
+  let activePlayRequestId = 0;
+
+  function cancelledResult(songId) {
+    return {
+      success: false,
+      error: "cancelled",
+      retryable: false,
+      songId: String(songId),
+    };
+  }
+
+  function notifyStateListeners() {
+    const state = getPlaybackState();
+    for (const listener of stateListeners) {
+      try {
+        listener(state);
+      } catch (_error) {
+        // A view subscriber must not break playback state updates.
+      }
+    }
+  }
+
+  function isCurrentPlayRequest(requestId) {
+    return requestId === activePlayRequestId;
+  }
 
   function isValidSongId(songId) {
     if (typeof songId === "string") return songId.trim() !== "";
@@ -25,17 +57,49 @@
 
   function normalizeQueueItem(item) {
     if (!item || !isValidSongId(item.id)) return null;
-    return {
+    const normalized = {
       id: String(item.id),
       title: typeof item.title === "string" ? item.title : "",
       artist: typeof item.artist === "string" ? item.artist : "",
       playlistId: item.playlistId == null ? "" : String(item.playlistId),
       liked: item.liked === true,
     };
+    if (typeof item.source === "string" && item.source.trim()) normalized.source = item.source.trim();
+    if (typeof item.coverUrl === "string" && /^https?:\/\//i.test(item.coverUrl.trim())) normalized.coverUrl = item.coverUrl.trim();
+    if (item.playable === false) normalized.playable = false;
+    if (typeof item.error === "string" && item.error.trim()) normalized.error = item.error.trim();
+    return normalized;
   }
 
   function normalizeMode(mode) {
     return mode === "shuffle" || mode === "heartbeat" || mode === "repeat-one" ? mode : "sequence";
+  }
+
+  function queueSignature(queue) {
+    return (Array.isArray(queue) ? queue : []).map((item) => String(item.id)).join("|");
+  }
+
+  function resetShuffleOrder() {
+    shuffleQueueSignature = "";
+    shuffleOrder = [];
+    shuffleCursor = -1;
+  }
+
+  function ensureShuffleOrder(deps = {}) {
+    const signature = queueSignature(currentQueue);
+    if (signature !== shuffleQueueSignature || shuffleOrder.length !== currentQueue.length) {
+      const remaining = currentQueue.map((_item, index) => index).filter((index) => index !== currentQueueIndex);
+      shuffleOrder = currentQueueIndex >= 0 ? [currentQueueIndex] : [];
+      while (remaining.length) {
+        const picked = randomIndex(remaining.length, deps);
+        shuffleOrder.push(remaining.splice(picked, 1)[0]);
+      }
+      shuffleQueueSignature = signature;
+      shuffleCursor = shuffleOrder.indexOf(currentQueueIndex);
+    } else {
+      const currentCursor = shuffleOrder.indexOf(currentQueueIndex);
+      if (currentCursor >= 0) shuffleCursor = currentCursor;
+    }
   }
 
   function cloneQueueItem(item) {
@@ -48,6 +112,9 @@
       liked: item.liked === true,
     };
     if (item.playedAt) cloned.playedAt = item.playedAt;
+    if (item.source) cloned.source = item.source;
+    if (item.playable === false) cloned.playable = false;
+    if (item.error) cloned.error = item.error;
     return cloned;
   }
 
@@ -69,9 +136,12 @@
   function hydratePlaybackState(state = {}) {
     const source = state && typeof state === "object" ? state : {};
     playMode = normalizeMode(source.mode);
-    currentQueue = Array.isArray(source.queue)
+    const hydratedQueue = Array.isArray(source.queue)
       ? source.queue.map(normalizeQueueItem).filter(Boolean)
       : [];
+    const hydratedSignature = queueSignature(hydratedQueue);
+    if (hydratedSignature !== shuffleQueueSignature) resetShuffleOrder();
+    currentQueue = hydratedQueue;
     const requestedIndex = Number(source.currentIndex);
     currentQueueIndex = currentQueue.length
       ? Math.max(0, Math.min(
@@ -94,6 +164,7 @@
         return true;
       })
       .slice(0, HISTORY_MAX);
+    notifyStateListeners();
     return getPlaybackState();
   }
 
@@ -108,12 +179,20 @@
 
   async function persistPlaybackState(bridge = stateBridge) {
     if (!bridge || typeof bridge.updateMusicPlaybackState !== "function") {
+      notifyStateListeners();
       return { success: true, state: getPlaybackState(), persisted: false };
     }
     stateBridge = bridge;
     const result = await bridge.updateMusicPlaybackState(getPlaybackState()).catch(() => null);
     if (result && result.success && result.state) hydratePlaybackState(result.state);
+    else notifyStateListeners();
     return result || { success: false, error: "playback-state-save-failed" };
+  }
+
+  function onStateChange(listener) {
+    if (typeof listener !== "function") return () => {};
+    stateListeners.add(listener);
+    return () => stateListeners.delete(listener);
   }
 
   function connectPlaybackState(bridge) {
@@ -139,6 +218,8 @@
     if (!Array.isArray(queue)) return;
     const normalized = queue.map(normalizeQueueItem).filter(Boolean);
     if (!normalized.length) return;
+    const nextSignature = queueSignature(normalized);
+    if (nextSignature !== shuffleQueueSignature) resetShuffleOrder();
     currentQueue = normalized;
     const id = String(songId);
     const index = currentQueue.findIndex((item) => item.id === id);
@@ -146,6 +227,10 @@
     const current = currentQueue[currentQueueIndex];
     if (!currentQueuePlaylistId && current && current.playlistId) {
       currentQueuePlaylistId = current.playlistId;
+    }
+    if (playMode === "shuffle" && shuffleOrder.length) {
+      const cursor = shuffleOrder.indexOf(currentQueueIndex);
+      if (cursor >= 0) shuffleCursor = cursor;
     }
   }
 
@@ -160,6 +245,7 @@
       title: item.title || "",
       artist: item.artist || "",
       liked: item.liked === true,
+      coverUrl: item.coverUrl || "",
     };
   }
 
@@ -177,8 +263,10 @@
     }
     if ((playMode === "shuffle" || playMode === "heartbeat") && offset > 0) {
       if (currentQueue.length === 1) return currentQueueIndex;
-      const picked = randomIndex(currentQueue.length, deps);
-      return picked === currentQueueIndex ? (picked + 1) % currentQueue.length : picked;
+      ensureShuffleOrder(deps);
+      if (shuffleCursor < 0) return currentQueueIndex;
+      shuffleCursor = (shuffleCursor + 1) % shuffleOrder.length;
+      return shuffleOrder[shuffleCursor];
     }
     return (currentQueueIndex + offset + currentQueue.length) % currentQueue.length;
   }
@@ -234,30 +322,24 @@
     };
   }
 
-  async function playDirectAudio(songId, deps, { openFallbackOnFailure = false } = {}) {
+  async function playDirectAudioOnce(songId, deps, { requestId } = {}) {
     const bridge = deps && deps.bridge ? deps.bridge : {};
     const audioPlayer = deps && deps.audioPlayer;
     const setStatus = deps && deps.setStatus;
 
-    if (nowMs(deps) < directAudioDisabledUntil) {
-      return { success: false, error: "direct-audio-disabled", songId };
-    }
     if (typeof bridge.fetchSongUrl !== "function") {
-      return openFallbackOnFailure
-        ? openOriginalSongFallback(songId, "fetch-url-unavailable", deps)
-        : { success: false, error: "fetch-url-unavailable", songId };
+      return mediaError.normalizeMediaError("fetch-url-unavailable", { songId });
     }
     if (typeof setStatus === "function") {
       setStatus("正在后台播放...", "info");
     }
-    const urlResult = await bridge.fetchSongUrl(songId).catch(() => null);
+    const urlResult = await bridge.fetchSongUrl(songId).catch((error) => ({ error }));
+    if (!isCurrentPlayRequest(requestId)) return cancelledResult(songId);
     if (!(urlResult && urlResult.success && urlResult.url)) {
-      const error = (urlResult && urlResult.error) || "no-audio-url";
-      return openFallbackOnFailure
-        ? openOriginalSongFallback(songId, error, deps)
-        : { success: false, error, songId };
+      return mediaError.normalizeMediaError(urlResult && (urlResult.error || urlResult), { songId });
     }
     const lyrics = await fetchLyrics(songId, bridge);
+    if (!isCurrentPlayRequest(requestId)) return cancelledResult(songId);
     const meta = {
       ...(deps && deps.meta && typeof deps.meta === "object" ? deps.meta : {}),
       ...lyrics,
@@ -269,39 +351,74 @@
         url: urlResult.url,
         songId,
       }).catch(() => null);
+      if (!isCurrentPlayRequest(requestId)) return cancelledResult(songId);
       if (hosted && hosted.success) {
         return { ...hosted, songId, method: hosted.method || "audio-host" };
       }
-      noteDirectAudioFailure(deps);
-      return openFallbackOnFailure
-        ? openOriginalSongFallback(songId, (hosted && hosted.error) || "audio-host-failed", deps)
-        : { success: false, error: (hosted && hosted.error) || "audio-host-failed", songId };
+      return mediaError.normalizeMediaError(hosted && hosted.error || "audio-host-failed", { songId });
     }
     if (!audioPlayer || typeof audioPlayer.playUrl !== "function") {
-      return openFallbackOnFailure
-        ? openOriginalSongFallback(songId, "audio-player-unavailable", deps)
-        : { success: false, error: "audio-player-unavailable", songId };
+      return mediaError.normalizeMediaError("audio-player-unavailable", { songId });
     }
     const audioResult = await audioPlayer.playUrl(urlResult.url, meta);
+    if (!isCurrentPlayRequest(requestId)) return cancelledResult(songId);
     if (audioResult && audioResult.success) {
       return { ...audioResult, songId, method: "audio" };
     }
-    noteDirectAudioFailure(deps);
     const error = (audioResult && audioResult.error) || "audio-play-failed";
-    return openFallbackOnFailure
-      ? openOriginalSongFallback(songId, error, deps)
-      : { success: false, error, songId };
+    return mediaError.normalizeMediaError(error, { songId });
+  }
+
+  function canRetryPlayback(result) {
+    return result && !result.success
+      && result.error !== "auth"
+      && result.error !== "cancelled"
+      && result.error !== "invalid-id";
+  }
+
+  async function playDirectAudio(songId, deps, options = {}) {
+    let result = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      result = await playDirectAudioOnce(songId, deps, options);
+      if (result && (result.success || result.error === "cancelled" || !canRetryPlayback(result))) {
+        return result;
+      }
+      if (typeof deps?.setStatus === "function") {
+        deps.setStatus("正在刷新音频地址…", "info");
+      }
+    }
+    noteDirectAudioFailure(deps);
+    return result || mediaError.normalizeMediaError("audio-unavailable", { songId });
+  }
+
+  function canSkipFailedSong(result) {
+    return Boolean(result && !result.success && ["forbidden", "not-found", "network", "unsupported"].includes(result.error));
+  }
+
+  function markPermanentFailure(songId, result) {
+    if (!result || result.success || !["forbidden", "not-found", "unsupported"].includes(result.error)) {
+      return false;
+    }
+    const item = currentQueue.find((entry) => entry.id === String(songId));
+    if (!item) return false;
+    item.playable = false;
+    item.error = result.error;
+    return true;
   }
 
   async function playSongWithFallback(songId, deps = {}) {
     if (!isValidSongId(songId)) {
       return { success: false, error: "invalid-id" };
     }
+    const requestId = ++activePlayRequestId;
     rememberQueue(deps.queue, songId, deps.mode, deps.playlistId);
     updateQueueIndex(songId);
-    const result = await playDirectAudio(songId, deps, { openFallbackOnFailure: false });
-    if (result && result.success) {
+    const result = await playDirectAudio(songId, deps, { requestId });
+    if (result && result.success && isCurrentPlayRequest(requestId)) {
       recordHistory(songId, deps.meta, deps);
+      await persistPlaybackState(deps.bridge);
+    } else if (result && !result.success && isCurrentPlayRequest(requestId)
+      && markPermanentFailure(songId, result)) {
       await persistPlaybackState(deps.bridge);
     }
     return result;
@@ -318,6 +435,7 @@
       artist,
       playlistId,
       liked: song.liked === true,
+      coverUrl: song.coverUrl || song.coverImgUrl || "",
     });
   }
 
@@ -361,17 +479,21 @@
     const historyIndex = offset < 0 && (playMode === "shuffle" || playMode === "heartbeat")
       ? previousHistoryIndex()
       : -1;
-    const nextIndex = historyIndex >= 0 ? historyIndex : adjacentIndex(offset, deps);
-    const next = currentQueue[nextIndex];
-    if (!next) {
-      return { success: false, error: "no-queue" };
+    let nextIndex = historyIndex >= 0 ? historyIndex : adjacentIndex(offset, deps);
+    let lastResult = null;
+    for (let attempts = 0; attempts < currentQueue.length; attempts += 1) {
+      const next = currentQueue[nextIndex];
+      if (!next) return lastResult || { success: false, error: "no-queue" };
+      currentQueueIndex = nextIndex;
+      lastResult = await playSongWithFallback(next.id, {
+        ...deps,
+        queue: currentQueue,
+        meta: queueMeta(next),
+      });
+      if (lastResult.success || offset < 0 || !canSkipFailedSong(lastResult)) return lastResult;
+      nextIndex = adjacentIndex(1, deps);
     }
-    currentQueueIndex = nextIndex;
-    return playSongWithFallback(next.id, {
-      ...deps,
-      queue: currentQueue,
-      meta: queueMeta(next),
-    });
+    return lastResult || { success: false, error: "no-queue" };
   }
 
   function playNext(deps = {}) {
@@ -384,6 +506,7 @@
 
   function setPlaybackMode(mode, deps = {}) {
     playMode = normalizeMode(mode);
+    notifyStateListeners();
     persistPlaybackState(deps.bridge || stateBridge).catch(() => {});
     return { success: true, mode: playMode };
   }
@@ -445,6 +568,7 @@
     cyclePlaybackMode,
     getPlaybackCapabilities,
     getPlaybackState,
+    onStateChange,
     removeHistoryItem,
     syncPlaybackState,
     shouldUseAudioFallback,

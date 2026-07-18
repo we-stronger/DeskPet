@@ -83,6 +83,16 @@ test("can request a random walk only while awake and idle", () => {
   assert.deepEqual(state.tick(), { action: "walk" });
 });
 
+test("focus context suppresses random walking and keeps a quiet idle action", () => {
+  const state = new PetStateController({
+    now: () => 1000,
+    random: () => 0,
+    walkChance: 1,
+  });
+
+  assert.deepEqual(state.tick({ focusActive: true }), { action: "idle", reason: "focus" });
+});
+
 test("uses a cooldown between random walk requests", () => {
   let time = 0;
   const state = new PetStateController({

@@ -19,7 +19,11 @@
     return null;
   }
 
-  const api = { visualActionForPointerResult };
+  function shouldIgnorePetMouseEvents({ petClickThroughEnabled = false } = {}) {
+    return petClickThroughEnabled === true;
+  }
+
+  const api = { shouldIgnorePetMouseEvents, visualActionForPointerResult };
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

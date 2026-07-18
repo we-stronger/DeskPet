@@ -42,6 +42,13 @@ test("music search play result messages are readable and method-aware", () => {
   assert.equal(statusMessageForPlayResult({ success: true, method: "web" }), "已在浏览器中打开网易云歌曲页。");
   assert.equal(statusMessageForPlayResult({ success: false, error: "invalid-id" }), "播放失败：invalid-id");
 });
+
+test("music search translates normalized playback failures into actionable Chinese", () => {
+  assert.equal(statusMessageForPlayResult({ success: false, error: "auth" }), "播放失败：请先登录网易云音乐。");
+  assert.equal(statusMessageForPlayResult({ success: false, error: "forbidden" }), "播放失败：这首歌暂时无法播放。");
+  assert.equal(statusMessageForPlayResult({ success: false, error: "network" }), "播放失败：网络连接失败，请稍后重试。");
+  assert.equal(statusMessageForPlayResult({ success: false, error: "unsupported" }), "播放失败：没有可用的音频来源。");
+});
 test("music search uses the dedicated NetEase search bridge instead of one hardcoded scheme", () => {
   const js = fs.readFileSync(path.join(root, "src", "renderer", "music-search.js"), "utf8");
   assert.match(js, /openSearchInNetEase\(trimmed\)/);

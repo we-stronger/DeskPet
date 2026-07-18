@@ -107,8 +107,73 @@ test("playSongWithFallback reports URL failures without opening the NetEase clie
   });
 
   assert.equal(result.success, false);
-  assert.equal(result.error, "no-audio-url");
-  assert.deepEqual(calls, [["fetchSongUrl", "789"]]);
+  assert.equal(result.error, "not-found");
+  assert.deepEqual(calls, [["fetchSongUrl", "789"], ["fetchSongUrl", "789"]]);
+});
+
+test("playSongWithFallback refreshes an expired audio URL once before failing", async () => {
+  const localService = loadService();
+  let fetchCount = 0;
+  const result = await localService.playSongWithFallback("refresh-me", {
+    bridge: {
+      fetchSongUrl: async () => {
+        fetchCount += 1;
+        return { success: true, url: `http://127.0.0.1/audio/${fetchCount}` };
+      },
+      playAudioUrlInPet: async () => fetchCount > 1
+        ? { success: true, method: "audio-host" }
+        : { success: false, error: "audio-host-failed" },
+    },
+    queue: [{ id: "refresh-me", title: "Refresh me" }],
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(fetchCount, 2);
+});
+
+test("playNext skips an unavailable queue item and plays the next available song", async () => {
+  const localService = loadService();
+  const played = [];
+  const result = await localService.playSongWithFallback("first", {
+    bridge: {
+      fetchSongUrl: async (id) => ({ success: true, url: `http://127.0.0.1/audio/${id}` }),
+      playAudioUrlInPet: async ({ songId }) => {
+        if (songId === "blocked") return { success: false, error: "forbidden" };
+        played.push(songId);
+        return { success: true, method: "audio-host" };
+      },
+    },
+    queue: [
+      { id: "first", title: "First" },
+      { id: "blocked", title: "Blocked" },
+      { id: "available", title: "Available" },
+    ],
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.songId, "first");
+  const next = await localService.playNext({
+    bridge: {
+      fetchSongUrl: async (id) => ({ success: true, url: `http://127.0.0.1/audio/${id}` }),
+      playAudioUrlInPet: async ({ songId }) => {
+        if (songId === "blocked") return { success: false, error: "forbidden" };
+        played.push(songId);
+        return { success: true, method: "audio-host" };
+      },
+    },
+    queue: [
+      { id: "first", title: "First" },
+      { id: "blocked", title: "Blocked" },
+      { id: "available", title: "Available" },
+    ],
+  });
+
+  assert.equal(next.success, true);
+  assert.equal(next.songId, "available");
+  assert.deepEqual(played, ["first", "available"]);
+  const queueState = localService.getPlaybackState().queue;
+  assert.equal(queueState[1].playable, false);
+  assert.equal(queueState[1].error, "forbidden");
 });
 
 test("playSongWithFallback rejects empty ids", async () => {
@@ -222,6 +287,30 @@ test("playNext can use shuffle mode without replaying the current song", async (
   assert.equal(result.success, true);
   assert.equal(result.songId, "three");
   assert.deepEqual(played, ["one", "three"]);
+});
+
+test("shuffle mode keeps one order for repeated next actions", async () => {
+  const localService = loadService();
+  const played = [];
+  const deps = {
+    bridge: {
+      fetchSongUrl: async (id) => ({ success: true, url: `http://127.0.0.1:4567/audio/${id}` }),
+    },
+    audioPlayer: { playUrl: async (_url, meta) => { played.push(meta.songId); return { success: true, method: "audio" }; } },
+    random: () => 0.99,
+    queue: [
+      { id: "one", title: "One" },
+      { id: "two", title: "Two" },
+      { id: "three", title: "Three" },
+    ],
+    mode: "shuffle",
+  };
+
+  await localService.playSongWithFallback("one", deps);
+  await localService.playNext(deps);
+  await localService.playNext({ ...deps, random: () => 0 });
+
+  assert.deepEqual(played, ["one", "three", "two"]);
 });
 
 test("playPrevious in shuffle mode returns to the actual previous song", async () => {
@@ -399,6 +488,25 @@ test("successful playback persists shared queue and history", async () => {
   assert.equal(updates[0].history[0].playedAt, "2026-07-09T01:02:03.000Z");
 });
 
+test("playback state subscribers receive the canonical current song and queue", async () => {
+  const localService = loadService();
+  const states = [];
+  const unsubscribe = localService.onStateChange((state) => states.push(state));
+  await localService.playSongWithFallback("one", {
+    bridge: {
+      fetchSongUrl: async () => ({ success: true, url: "http://127.0.0.1/audio" }),
+      playAudioUrlInPet: async () => ({ success: true, method: "audio-host" }),
+    },
+    queue: [{ id: "one", title: "One" }],
+    meta: { title: "One" },
+  });
+  unsubscribe();
+
+  assert.ok(states.length >= 1);
+  assert.equal(states.at(-1).current.id, "one");
+  assert.deepEqual(states.at(-1).queue.map((item) => item.id), ["one"]);
+});
+
 test("history removal and clear use the shared store result", async () => {
   const localService = loadService();
   localService.hydratePlaybackState({
@@ -422,4 +530,60 @@ test("history removal and clear use the shared store result", async () => {
   const cleared = await localService.clearHistory(bridge);
   assert.equal(cleared.success, true);
   assert.deepEqual(localService.getPlaybackState().history, []);
+});
+
+test("a newer play request cancels the older request before it can commit state", async () => {
+  const localService = loadService();
+  let releaseFirstUrl;
+  let fetchCount = 0;
+  const updates = [];
+  const opened = [];
+  const bridge = {
+    fetchSongUrl: async (id) => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return new Promise((resolve) => {
+          releaseFirstUrl = () => resolve({ success: true, url: `http://127.0.0.1/audio/${id}` });
+        });
+      }
+      return { success: true, url: `http://127.0.0.1/audio/${id}` };
+    },
+    getSongLyric: async () => ({ success: true, lyric: "", tlyric: "" }),
+    playAudioUrlInPet: async ({ songId }) => ({ success: true, method: "audio-host", songId }),
+    updateMusicPlaybackState: async (state) => {
+      updates.push(state);
+      return { success: true, state };
+    },
+    openMusicSong: async (id) => {
+      opened.push(id);
+      return { success: true };
+    },
+  };
+
+  const first = localService.playSongWithFallback("first", {
+    bridge,
+    queue: [{ id: "first", title: "First" }],
+    meta: { title: "First" },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const second = localService.playSongWithFallback("second", {
+    bridge,
+    queue: [{ id: "second", title: "Second" }],
+    meta: { title: "Second" },
+  });
+  releaseFirstUrl();
+
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+  assert.deepEqual(firstResult, {
+    success: false,
+    error: "cancelled",
+    retryable: false,
+    songId: "first",
+  });
+  assert.equal(secondResult.success, true);
+  assert.equal(secondResult.songId, "second");
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].current.id, "second");
+  assert.deepEqual(opened, []);
 });

@@ -115,7 +115,6 @@ test("focus submenu exposes timer summary and start/pause/reset commands", () =>
     "⏸ 暂停 / 继续",
     "■ 结束专注",
     "↺ 重置",
-    "📋 查看专注记录",
   ]);
 
   focusMenu.filter((item) => typeof item.click === "function").forEach((item) => item.click());
@@ -125,7 +124,6 @@ test("focus submenu exposes timer summary and start/pause/reset commands", () =>
     "focus:toggle-pause",
     "focus:end",
     "focus:reset",
-    "settings:open-records",
   ]);
 });
 
@@ -137,7 +135,7 @@ test("focus submenu keeps configuration out of the records entry", () => {
   });
 
   const focusLabels = labels(submenu(template, "⏱ 专注"));
-  assert.ok(focusLabels.includes("📋 查看专注记录"));
+  assert.ok(!focusLabels.includes("📋 查看专注记录"));
   assert.ok(!focusLabels.includes("⚙ 专注设置"));
   assert.ok(!focusLabels.includes("显示设置"));
 });
@@ -166,6 +164,61 @@ test("focus submenu reflects the pending task name and today's record count", ()
   assert.ok(focusLabels.includes("专注 45 分 / 休息 10 分"));
   assert.ok(focusLabels.includes("今日已完成 2 次，共 70 分钟"));
   assert.ok(focusLabels.includes("▶ 开始专注（45 分钟）"));
+});
+
+test("focus summary excludes interrupted focus and break records", () => {
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  const completedAt = today.toISOString();
+  const template = buildContextMenuTemplate({
+    petState: { mood: 50, affinity: 0, energy: 80, sleeping: false },
+    focusRecords: [
+      { phase: "focus", result: "completed", focusDurationMs: 25 * 60 * 1000, completedAt },
+      { phase: "focus", result: "interrupted", focusDurationMs: 10 * 60 * 1000, completedAt },
+      { phase: "short-break", result: "completed", focusDurationMs: 5 * 60 * 1000, completedAt },
+    ],
+    sendCommand: () => {},
+    quit: () => {},
+  });
+
+  const focusLabels = labels(submenu(template, "⏱ 专注"));
+  assert.ok(focusLabels.includes("今日已完成 1 次，共 25 分钟"));
+});
+
+test("focus submenu reflects waiting-for-long-break state", () => {
+  const template = buildContextMenuTemplate({
+    petState: { mood: 50, affinity: 0, energy: 80, sleeping: false },
+    longBreakDurationMinutes: 15,
+    focusSession: {
+      phase: "waiting-for-break",
+      status: "waiting",
+      taskName: "写季度规划",
+      suggestedBreakPhase: "long-break",
+    },
+    sendCommand: () => {},
+    quit: () => {},
+  });
+
+  const focusMenu = submenu(template, "⏱ 专注");
+  assert.equal(focusMenu.find((item) => item.label.startsWith("当前任务：")).label, "当前任务：写季度规划");
+  assert.equal(focusMenu.find((item) => item.label?.startsWith("▶ 开始专注")).enabled, false);
+  assert.equal(focusMenu.find((item) => item.label === "☕ 开始长休息（15 分钟）").enabled, true);
+  assert.equal(focusMenu.find((item) => item.label === "⏸ 暂停").enabled, false);
+  assert.equal(focusMenu.find((item) => item.label === "⏭ 跳过本次休息").enabled, true);
+});
+
+test("focus submenu exposes resume for a paused focus session", () => {
+  const template = buildContextMenuTemplate({
+    petState: { mood: 50, affinity: 0, energy: 80, sleeping: false },
+    focusSession: { phase: "focus", status: "paused", taskName: "code review" },
+    sendCommand: () => {},
+    quit: () => {},
+  });
+
+  const focusMenu = submenu(template, "⏱ 专注");
+  assert.equal(focusMenu.find((item) => item.label === "▶ 继续").enabled, true);
+  assert.equal(focusMenu.find((item) => item.label === "■ 提前结束专注").enabled, true);
+  assert.equal(focusMenu.find((item) => item.label?.startsWith("▶ 开始专注")).enabled, false);
 });
 
 test("task submenu offers recent task names and dispatches set/clear commands", () => {
@@ -224,17 +277,55 @@ test("tray menu exposes compact recovery commands", () => {
     "状态：睡眠中 / 精力 0",
     "👀 显示桌宠",
     "⚙ 设置",
+    "⏱ 专注",
     "↔ 重置尺寸",
     "⏱ 重置速度",
     "📍 重置位置",
     "↺ 恢复默认",
+    "🎵 打开音乐面板",
+    "⏱ 显示时间",
+    "🎯 显示专注状态",
+    "🖱 桌宠鼠标穿透",
+    "🖱 音乐栏鼠标穿透",
     "⏻ 退出",
   ]);
 
   template.find((item) => item.label === "↔ 重置尺寸").click();
   template.find((item) => item.label === "⚙ 设置").click();
   template.find((item) => item.label === "📍 重置位置").click();
-  assert.deepEqual(commands, ["size:100", "settings", "reset-position"]);
+  template.find((item) => item.label === "🎵 打开音乐面板").click();
+  template.find((item) => item.label === "⏱ 显示时间").click();
+  template.find((item) => item.label === "🎯 显示专注状态").click();
+  template.find((item) => item.label === "🖱 桌宠鼠标穿透").click();
+  template.find((item) => item.label === "🖱 音乐栏鼠标穿透").click();
+  assert.deepEqual(commands, [
+    "size:100",
+    "settings",
+    "reset-position",
+    "music:open-panel",
+    "clock:toggle",
+    "focus-indicator:toggle",
+    "pet-click-through:toggle",
+    "music-click-through:toggle",
+  ]);
+});
+
+test("tray focus submenu uses the persisted session snapshot", () => {
+  const commands = [];
+  const template = buildTrayMenuTemplate({
+    petState: { mood: 60, affinity: 2, energy: 80, sleeping: false },
+    focusSession: { phase: "focus", status: "running", taskName: "写代码" },
+    pendingTaskName: "写代码",
+    sendCommand: (command) => commands.push(command),
+    resetPosition: () => {},
+    quit: () => {},
+  });
+
+  const focusMenu = submenu(template, "⏱ 专注");
+  assert.equal(focusMenu.find((item) => item.label === "⏸ 暂停").enabled, true);
+  assert.equal(focusMenu.find((item) => item.label === "■ 提前结束专注").enabled, true);
+  focusMenu.find((item) => item.label === "⏸ 暂停").click();
+  assert.deepEqual(commands, ["focus:toggle-pause"]);
 });
 
 test("music submenu exposes in-app music commands without opening the NetEase client", () => {

@@ -2,6 +2,8 @@
 // without jsdom — we just verify the rendered HTML strings contain the
 // expected data and escape user input safely.
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 
 // Stub `window` so the IIFE in each view module can attach its exports
@@ -85,6 +87,19 @@ test("renderPlaylists shows empty state and includes cover image when present", 
   assert.match(html, /https:\/\/example\.com\/c\.jpg/);
   assert.match(html, /data-playlist-id="8"/);
   assert.match(html, /music-panel-cover-placeholder/);
+  assert.match(html, /loading="lazy"/);
+  assert.match(html, /data-cover-url="https:\/\/example\.com\/c\.jpg"/);
+});
+
+test("renderPlaylists uses a semantic compact card with one explicit open action", () => {
+  const html = playlistView.renderPlaylists([
+    { id: 7, name: "Playlist One", trackCount: 12, creator: "Tester", coverImgUrl: "https://example.com/c.jpg" },
+  ]);
+
+  assert.match(html, /<article class="music-panel-playlist"/);
+  assert.match(html, /class="music-panel-playlist__meta"/);
+  assert.match(html, /class="music-panel-open-playlist"/);
+  assert.match(html, /aria-label="Open playlist: Playlist One"/);
 });
 
 test("renderPlaylistDetail includes the title and falls back to trackCount", () => {
@@ -95,6 +110,21 @@ test("renderPlaylistDetail includes the title and falls back to trackCount", () 
   assert.match(html, /我的精选/);
   assert.match(html, /3 首/);
   assert.match(html, /data-song-id="1"/);
+  assert.match(html, /播放全部/);
+  assert.match(html, /随机播放/);
+  assert.match(html, /自己/);
+});
+
+test("renderPlaylistDetail exposes a summary and clear all-or-shuffle actions", () => {
+  const html = playlistView.renderPlaylistDetail({
+    playlist: { id: 7, name: "Playlist One", trackCount: 3, creator: "Tester" },
+    songs: [],
+  });
+
+  assert.match(html, /class="music-panel-detail-summary"/);
+  assert.match(html, /data-play-mode="sequence"/);
+  assert.match(html, /data-play-mode="shuffle"/);
+  assert.match(html, /data-play-mode="repeat-one"/);
 });
 
 test("renderPlaylistDetail handles a missing playlist gracefully", () => {
@@ -123,4 +153,19 @@ test("renderPlaylistDetail back button escapes hostile playlist names", () => {
   // attribute on the title row.
   assert.doesNotMatch(html, /<script>alert/);
   assert.match(html, /&lt;script&gt;/);
+});
+
+test("compact music panel reserves a scrollable content viewport for playlist details", () => {
+  const css = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "styles", "music.css"), "utf8");
+
+  assert.match(
+    css,
+    /\.music-panel\s*\{[\s\S]*?height:\s*min\(480px,\s*calc\(100vh\s*-\s*24px\)\)/,
+    "the compact panel needs a real grid height so its 1fr content row can scroll",
+  );
+  assert.match(
+    css,
+    /\.music-panel-content\s*\{[\s\S]*?min-height:\s*0;[\s\S]*?overflow-y:\s*auto/,
+    "playlist and detail content must remain scrollable instead of being clipped by the panel",
+  );
 });

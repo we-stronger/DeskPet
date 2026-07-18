@@ -50,9 +50,17 @@ test("normalizes missing and invalid settings to safe defaults", () => {
       dailyGreetingEnabled: true,
       focusDurationMinutes: 25,
       breakDurationMinutes: 5,
+      longBreakDurationMinutes: 15,
+      focusRoundsBeforeLongBreak: 4,
+      focusNotificationsEnabled: true,
+      focusSoundEnabled: false,
+      focusPetReactionsEnabled: true,
+      focusConfirmInterrupt: true,
+      focusSession: null,
       pendingTaskName: "",
       focusRecords: [],
       clockEnabled: true,
+      clockOpacityPercent: 100,
       clockDisplayMode: "floating",
       focusIndicatorEnabled: true,
       focusDisplayMode: "floating",
@@ -135,9 +143,17 @@ test("loads and saves normalized settings as JSON", () => {
     dailyGreetingEnabled: true,
     focusDurationMinutes: 25,
     breakDurationMinutes: 5,
+    longBreakDurationMinutes: 15,
+    focusRoundsBeforeLongBreak: 4,
+    focusNotificationsEnabled: true,
+    focusSoundEnabled: false,
+    focusPetReactionsEnabled: true,
+    focusConfirmInterrupt: true,
+    focusSession: null,
     pendingTaskName: "",
     focusRecords: [],
     clockEnabled: true,
+    clockOpacityPercent: 100,
     clockDisplayMode: "floating",
     focusIndicatorEnabled: true,
     focusDisplayMode: "floating",
@@ -186,9 +202,17 @@ test("loads and saves normalized settings as JSON", () => {
     dailyGreetingEnabled: true,
     focusDurationMinutes: 25,
     breakDurationMinutes: 5,
+    longBreakDurationMinutes: 15,
+    focusRoundsBeforeLongBreak: 4,
+    focusNotificationsEnabled: true,
+    focusSoundEnabled: false,
+    focusPetReactionsEnabled: true,
+    focusConfirmInterrupt: true,
+    focusSession: null,
     pendingTaskName: "",
     focusRecords: [],
     clockEnabled: true,
+    clockOpacityPercent: 100,
     clockDisplayMode: "floating",
     focusIndicatorEnabled: true,
     focusDisplayMode: "floating",
@@ -238,8 +262,85 @@ test("clamps focus and break durations and trims the task name", () => {
   assert.equal(normalized.pendingTaskName.length, 60);
 });
 
-test("normalizes focus records and caps the array at 50 entries", () => {
-  const records = Array.from({ length: 55 }, (_, i) => ({
+test("normalizes focus cycle, reminder, and companion settings", () => {
+  const normalized = normalizePetSettings({
+    longBreakDurationMinutes: 999,
+    focusRoundsBeforeLongBreak: 0,
+    focusNotificationsEnabled: false,
+    focusSoundEnabled: true,
+    focusPetReactionsEnabled: false,
+    focusConfirmInterrupt: false,
+  });
+
+  assert.equal(normalized.longBreakDurationMinutes, 120);
+  assert.equal(normalized.focusRoundsBeforeLongBreak, 1);
+  assert.equal(normalized.focusNotificationsEnabled, false);
+  assert.equal(normalized.focusSoundEnabled, true);
+  assert.equal(normalized.focusPetReactionsEnabled, false);
+  assert.equal(normalized.focusConfirmInterrupt, false);
+});
+
+test("normalizes a versioned active focus session and rejects future versions", () => {
+  const session = {
+    version: 1,
+    revision: 3,
+    sessionId: "session-1",
+    taskName: "Persistent task",
+    phase: "focus",
+    status: "paused",
+    startedAt: 1000,
+    phaseStartedAt: 1200,
+    endsAt: null,
+    pausedRemainingMs: 500,
+    plannedDurationMs: 1000,
+    completedFocusRounds: 1,
+    roundsBeforeLongBreak: 4,
+    focusDurationMs: 1000,
+    shortBreakDurationMs: 200,
+    longBreakDurationMs: 500,
+    suggestedBreakPhase: null,
+    updatedAt: 1500,
+  };
+
+  assert.deepEqual(normalizePetSettings({ focusSession: session }).focusSession, session);
+  assert.equal(normalizePetSettings({ focusSession: { ...session, version: 2 } }).focusSession, null);
+  assert.equal(normalizePetSettings({ focusSession: { ...session, sessionId: "" } }).focusSession, null);
+});
+
+test("preserves rich completed, interrupted, and break history records", () => {
+  const richRecord = {
+    id: "record-1",
+    transitionKey: "session-1:focus:1000:interrupted",
+    sessionId: "session-1",
+    task: "Interrupted task",
+    taskName: "Interrupted task",
+    phase: "focus",
+    result: "interrupted",
+    plannedDurationMs: 1000,
+    actualDurationMs: 400,
+    focusDurationMs: 400,
+    startedAt: 1000,
+    completedAt: "2026-07-15T10:00:00.000Z",
+    roundNumber: 1,
+  };
+  const breakRecord = {
+    ...richRecord,
+    id: "record-2",
+    transitionKey: "session-1:short-break:2000:completed",
+    phase: "short-break",
+    result: "completed",
+    actualDurationMs: 200,
+    focusDurationMs: 0,
+  };
+
+  assert.deepEqual(normalizePetSettings({ focusRecords: [richRecord, breakRecord] }).focusRecords, [
+    richRecord,
+    breakRecord,
+  ]);
+});
+
+test("normalizes focus records and caps the array at 500 entries", () => {
+  const records = Array.from({ length: 505 }, (_, i) => ({
     task: `task ${i}`,
     focusDurationMs: 1500000 + i,
     completedAt: new Date(2026, 0, 1, 10, i).toISOString(),
@@ -247,9 +348,9 @@ test("normalizes focus records and caps the array at 50 entries", () => {
   records.push({ task: "invalid", focusDurationMs: -1, completedAt: "" });
   records.push(null);
   const normalized = normalizePetSettings({ focusRecords: records });
-  assert.equal(normalized.focusRecords.length, 50);
+  assert.equal(normalized.focusRecords.length, 500);
   assert.equal(normalized.focusRecords[0].task, "task 5");
-  assert.equal(normalized.focusRecords[49].task, "task 54");
+  assert.equal(normalized.focusRecords[499].task, "task 504");
   assert.equal(normalized.focusRecords[0].focusDurationMs, 1500005);
 });
 

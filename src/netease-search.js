@@ -1,4 +1,5 @@
 const https = require("node:https");
+const { decodeResponseBuffer, repairMojibake } = require("./text-normalize");
 
 // NetEase Cloud Music's public (undocumented) search endpoint. No auth
 // required for anonymous search; returns JSON with `result.songs[]`.
@@ -61,17 +62,17 @@ function normalizeSong(raw) {
     return null;
   }
   const id = raw.id;
-  const name = typeof raw.name === "string" ? raw.name.trim() : "";
+  const name = typeof raw.name === "string" ? repairMojibake(raw.name).trim() : "";
   if (!Number.isFinite(id) || !name) {
     return null;
   }
   const artists = Array.isArray(raw.artists)
     ? raw.artists
-        .map((a) => (a && typeof a.name === "string" ? a.name.trim() : ""))
+        .map((a) => (a && typeof a.name === "string" ? repairMojibake(a.name).trim() : ""))
         .filter(Boolean)
     : [];
   const album = raw.album && typeof raw.album.name === "string"
-    ? raw.album.name.trim()
+    ? repairMojibake(raw.album.name).trim()
     : "";
   const durationMs = Number.isFinite(raw.duration) ? raw.duration : null;
   return { id, name, artists, album, durationMs };
@@ -112,7 +113,7 @@ function defaultPostJson(url, body, { timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
         const chunks = [];
         res.on("data", (chunk) => chunks.push(chunk));
         res.on("end", () => {
-          const text = Buffer.concat(chunks).toString("utf8");
+          const text = decodeResponseBuffer(Buffer.concat(chunks), res.headers);
           if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
             resolve({ statusCode: res.statusCode, body: text });
             return;

@@ -64,6 +64,7 @@
       const dx = event.clientX - startClientX;
       const dy = event.clientY - startClientY;
       if (!didDrag && Math.hypot(dx, dy) < threshold) return;
+      if (!didDrag && typeof onStart === "function") onStart();
       didDrag = true;
       lastX = baseX + dx;
       lastY = baseY + dy;
@@ -105,7 +106,6 @@
       win.addEventListener("pointermove", onWindowPointerMove);
       win.addEventListener("pointerup", onWindowPointerUp);
       win.addEventListener("pointercancel", onWindowPointerUp);
-      if (typeof onStart === "function") onStart();
       // Stop the pet's #stage pointerdown from also kicking off a pet
       // drag (which would move the BrowserWindow) while the user is
       // dragging an in-pet widget.

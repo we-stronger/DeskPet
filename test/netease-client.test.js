@@ -373,6 +373,22 @@ test("getTopCharts reads /api/toplist and normalizes each entry", async () => {
   assert.equal(calls[0].path, "/api/toplist");
 });
 
+test("getTopCharts repairs mojibake in chart names", async () => {
+  const { fn } = fakeRequest([
+    fakeResponse({
+      body: {
+        code: 200,
+        list: [{ id: 1, name: "浣犲ソ涓栫晫" }],
+      },
+    }),
+  ]);
+
+  const result = await client.getTopCharts({ request: fn });
+
+  assert.equal(result.success, true);
+  assert.equal(result.charts[0].name, "你好世界");
+});
+
 test("getLyric returns lrc + translation text", async () => {
   const { fn, calls } = fakeRequest([
     fakeResponse({
@@ -388,6 +404,24 @@ test("getLyric returns lrc + translation text", async () => {
   assert.equal(result.lyric.startsWith("[00:01.00]第一句"), true);
   assert.equal(result.tlyric.includes("First line"), true);
   assert.match(calls[0].path, /^\/api\/song\/lyric\?id=42/);
+});
+
+test("getLyric repairs mojibake in lyric lines before returning them", async () => {
+  const { fn } = fakeRequest([
+    fakeResponse({
+      body: {
+        code: 200,
+        lrc: { lyric: "[00:01.00]浣犲ソ涓栫晫" },
+        tlyric: { lyric: "[00:01.00]浣犲ソ涓栫晫" },
+      },
+    }),
+  ]);
+
+  const result = await client.getLyric(43, { cookie: "MUSIC_U=abc", request: fn });
+
+  assert.equal(result.success, true);
+  assert.equal(result.lyric, "[00:01.00]你好世界");
+  assert.equal(result.tlyric, "[00:01.00]你好世界");
 });
 
 test("getLyric rejects empty songId without hitting the network", async () => {

@@ -82,6 +82,64 @@ test("renderer index.html loads shape and music status helpers before renderer",
   assert.ok(musicStatusIdx < rendererIdx, "music-status-view.js must load before renderer.js");
 });
 
+test("renderer index.html loads the CSP-safe runtime style helper before renderer", () => {
+  const html = fs.readFileSync(path.join(root, "src", "renderer", "index.html"), "utf8");
+  const tags = extractScriptTags(html);
+  const runtimeStyleIdx = indexOf(tags, "runtime-style.js");
+  const rendererIdx = indexOf(tags, "renderer.js");
+  assert.ok(runtimeStyleIdx >= 0, "index.html must load runtime-style.js");
+  assert.ok(runtimeStyleIdx < rendererIdx, "runtime-style.js must load before renderer.js");
+});
+
+test("renderer index.html loads the unified widget runtime after its dependencies and before renderer", () => {
+  const html = fs.readFileSync(path.join(root, "src", "renderer", "index.html"), "utf8");
+  const tags = extractScriptTags(html);
+  const stateIdx = indexOf(tags, "widget-state.js");
+  const coordinationIdx = indexOf(tags, "widget-coordination.js");
+  const dragIdx = indexOf(tags, "widget-drag.js");
+  const runtimeIdx = indexOf(tags, "widget-runtime.js");
+  const rendererIdx = indexOf(tags, "renderer.js");
+
+  assert.ok(runtimeIdx >= 0, "index.html must load widget-runtime.js");
+  assert.ok(stateIdx < runtimeIdx, "widget state must load before widget runtime");
+  assert.ok(coordinationIdx < runtimeIdx, "widget coordination must load before widget runtime");
+  assert.ok(dragIdx < runtimeIdx, "widget drag must load before widget runtime");
+  assert.ok(runtimeIdx < rendererIdx, "widget runtime must load before renderer.js");
+});
+
+test("renderer index.html loads focused renderer runtimes before bootstrap", () => {
+  const html = fs.readFileSync(path.join(root, "src", "renderer", "index.html"), "utf8");
+  const tags = extractScriptTags(html);
+  const rendererIdx = indexOf(tags, "renderer.js");
+  for (const runtime of ["focus-runtime.js", "music-status-runtime.js", "pet-interaction-runtime.js"]) {
+    const index = indexOf(tags, runtime);
+    assert.ok(index >= 0, `${runtime} must be loaded`);
+    assert.ok(index < rendererIdx, `${runtime} must load before renderer.js`);
+  }
+});
+
+test("renderer loads focus session and pet bridge modules before renderer", () => {
+  const html = fs.readFileSync(path.join(root, "src", "renderer", "index.html"), "utf8");
+  const tags = extractScriptTags(html);
+  const timerIdx = indexOf(tags, "focus-timer.js");
+  const sessionIdx = indexOf(tags, "focus-session-controller.js");
+  const petBridgeIdx = indexOf(tags, "focus-pet-bridge.js");
+  const rendererIdx = indexOf(tags, "renderer.js");
+
+  assert.ok(timerIdx >= 0, "focus timer must be loaded");
+  assert.ok(sessionIdx > timerIdx, "focus session controller must load after focus timer");
+  assert.ok(petBridgeIdx > sessionIdx, "focus pet bridge must load after session controller");
+  assert.ok(petBridgeIdx < rendererIdx, "focus modules must load before renderer.js");
+});
+
+test("runtime style helper loads before visual style and hold lock modules", () => {
+  const html = fs.readFileSync(path.join(root, "src", "renderer", "index.html"), "utf8");
+  const tags = extractScriptTags(html);
+  const runtimeStyleIdx = indexOf(tags, "runtime-style.js");
+  assert.ok(runtimeStyleIdx < indexOf(tags, "pet-visual-style.js"));
+  assert.ok(runtimeStyleIdx < indexOf(tags, "hold-visual-lock.js"));
+});
+
 test("music pages load hidden audio fallback before playback scripts", () => {
   const cases = [
     { file: "index.html", host: "music-panel.js" },
@@ -120,4 +178,12 @@ test("music pages load shared playback service before music hosts", () => {
     assert.ok(audioIdx < serviceIdx, `${file} must load audio-player.js before music-playback-service.js`);
     assert.ok(serviceIdx < hostIdx, `${file} must load music-playback-service.js before ${host}`);
   }
+});
+
+test("renderer updates music progress without rebuilding buttons on every timeupdate", () => {
+  const source = fs.readFileSync(path.join(root, "src", "renderer", "renderer.js"), "utf8");
+
+  assert.match(source, /lastMusicStatusRenderKey/);
+  assert.match(source, /musicStatusRenderKey/);
+  assert.match(source, /updateMusicProgressDisplay/);
 });

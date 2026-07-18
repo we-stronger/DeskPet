@@ -1,6 +1,9 @@
 (function attachPetVisualStyle(root) {
   const MAX_VISUAL_SCALE = 2;
   const BASE_VISUAL_SIZE = 512;
+  const runtimeStyle = typeof document !== "undefined"
+    ? root.DeskpetRuntimeStyle?.createRuntimeStyleManager?.(document)
+    : null;
 
   function clampScale(scale) {
     const value = Number(scale);
@@ -29,11 +32,21 @@
 
   function applyPetVisualStyle(element, stageSize, scale) {
     const box = visualBoxForScale(stageSize, scale);
-    element.style.width = `${box.width}px`;
-    element.style.height = `${box.height}px`;
-    element.style.left = `${box.left}px`;
-    element.style.bottom = `${box.bottom}px`;
-    element.style.transform = "none";
+    if (runtimeStyle) {
+      runtimeStyle.apply(element, "pet-visual", {
+        width: `${box.width}px`,
+        height: `${box.height}px`,
+        left: `${box.left}px`,
+        bottom: `${box.bottom}px`,
+        transform: "none",
+      });
+    } else {
+      element.style.width = `${box.width}px`;
+      element.style.height = `${box.height}px`;
+      element.style.left = `${box.left}px`;
+      element.style.bottom = `${box.bottom}px`;
+      element.style.transform = "none";
+    }
     return box;
   }
 

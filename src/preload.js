@@ -22,6 +22,9 @@ contextBridge.exposeInMainWorld("deskpet", {
   getSettings() {
     return ipcRenderer.invoke("settings:get");
   },
+  showFocusNotification(payload) {
+    return ipcRenderer.invoke("focus:notify", payload || {});
+  },
   searchMusic(keyword, limit = 20) {
     return ipcRenderer.invoke("music:search", { keyword, query: keyword, limit });
   },
@@ -175,6 +178,11 @@ contextBridge.exposeInMainWorld("deskpet", {
     const listener = (_event, state) => callback(state);
     ipcRenderer.on("music:playback-state-changed", listener);
     return () => ipcRenderer.off("music:playback-state-changed", listener);
+  },
+  onMusicAuthStateChanged(callback) {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on("music:auth-state-changed", listener);
+    return () => ipcRenderer.off("music:auth-state-changed", listener);
   },
   close() {
     return ipcRenderer.invoke("window:close");

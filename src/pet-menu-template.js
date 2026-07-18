@@ -39,7 +39,14 @@ function todayFocusSummary(records) {
     return null;
   }
   const key = todayKey();
-  const todays = records.filter((r) => typeof r.completedAt === "string" && r.completedAt.slice(0, 10) === key);
+  const todays = records.filter((record) => {
+    if (!record || typeof record.completedAt !== "string" || record.completedAt.slice(0, 10) !== key) {
+      return false;
+    }
+    const isFocus = !record.phase || record.phase === "focus";
+    const isCompleted = !record.result || record.result === "completed";
+    return isFocus && isCompleted;
+  });
   if (todays.length === 0) {
     return null;
   }
@@ -50,12 +57,35 @@ function todayFocusSummary(records) {
 function focusSubmenu({
   focusDurationMinutes,
   breakDurationMinutes,
+  longBreakDurationMinutes,
   pendingTaskName,
   focusRecords,
+  focusSession,
   sendCommand,
 }) {
-  const taskLabel = (pendingTaskName && pendingTaskName.trim())
-    ? `当前任务：${pendingTaskName}`
+  const session = focusSession && typeof focusSession === "object" ? focusSession : {};
+  const phase = typeof session.phase === "string" ? session.phase : "idle";
+  const status = typeof session.status === "string" ? session.status : "idle";
+  const sessionTaskName = typeof session.taskName === "string" ? session.taskName.trim() : "";
+  const taskName = sessionTaskName || (typeof pendingTaskName === "string" ? pendingTaskName.trim() : "");
+  const isFocus = phase === "focus";
+  const isBreak = phase === "short-break" || phase === "long-break";
+  const isWaitingForBreak = phase === "waiting-for-break";
+  const isWaitingForFocus = phase === "waiting-for-focus";
+  const isTimedPhase = isFocus || isBreak;
+  const canStartFocus = phase === "idle" || isWaitingForFocus;
+  const canStartBreak = phase === "idle" || isWaitingForBreak;
+  const suggestedLongBreak = isWaitingForBreak && session.suggestedBreakPhase === "long-break";
+  const breakMinutes = suggestedLongBreak ? longBreakDurationMinutes : breakDurationMinutes;
+  const breakKind = suggestedLongBreak ? "长休息" : (isWaitingForBreak ? "短休息" : "休息");
+  const pauseLabel = status === "paused"
+    ? "▶ 继续"
+    : (phase === "idle" ? "⏸ 暂停 / 继续" : "⏸ 暂停");
+  const endLabel = isFocus
+    ? "■ 提前结束专注"
+    : (isBreak || isWaitingForBreak ? "⏭ 跳过本次休息" : "■ 结束专注");
+  const taskLabel = taskName
+    ? `当前任务：${taskName}`
     : "当前任务：（未命名）";
   const durationLabel = `专注 ${focusDurationMinutes} 分 / 休息 ${breakDurationMinutes} 分`;
   const summary = todayFocusSummary(focusRecords);
@@ -67,13 +97,31 @@ function focusSubmenu({
     { label: durationLabel, enabled: false },
     { label: summaryLabel, enabled: false },
     { type: "separator" },
-    { label: `▶ 开始专注（${focusDurationMinutes} 分钟）`, click: () => sendCommand("focus:start") },
-    { label: `☕ 开始休息（${breakDurationMinutes} 分钟）`, click: () => sendCommand("break:start") },
-    { label: "⏸ 暂停 / 继续", click: () => sendCommand("focus:toggle-pause") },
-    { label: "■ 结束专注", click: () => sendCommand("focus:end") },
-    { label: "↺ 重置", click: () => sendCommand("focus:reset") },
-    { type: "separator" },
-    { label: "📋 查看专注记录", click: () => sendCommand("settings:open-records") },
+    {
+      label: `▶ 开始专注（${focusDurationMinutes} 分钟）`,
+      enabled: canStartFocus,
+      click: () => sendCommand("focus:start"),
+    },
+    {
+      label: `☕ 开始${breakKind}（${breakMinutes} 分钟）`,
+      enabled: canStartBreak,
+      click: () => sendCommand("break:start"),
+    },
+    {
+      label: pauseLabel,
+      enabled: isTimedPhase,
+      click: () => sendCommand("focus:toggle-pause"),
+    },
+    {
+      label: endLabel,
+      enabled: isFocus || isBreak || isWaitingForBreak,
+      click: () => sendCommand("focus:end"),
+    },
+    {
+      label: "↺ 重置",
+      enabled: phase !== "idle",
+      click: () => sendCommand("focus:reset"),
+    },
   ];
 }
 
@@ -167,8 +215,11 @@ function buildContextMenuTemplate({
   petState,
   focusDurationMinutes = 25,
   breakDurationMinutes = 5,
+  longBreakDurationMinutes = 15,
+  focusRoundsBeforeLongBreak = 4,
   pendingTaskName = "",
   focusRecords = [],
+  focusSession = null,
   recentTaskNames = [],
   sendCommand,
   quit,
@@ -188,8 +239,11 @@ function buildContextMenuTemplate({
       submenu: focusSubmenu({
         focusDurationMinutes,
         breakDurationMinutes,
+        longBreakDurationMinutes,
+        focusRoundsBeforeLongBreak,
         pendingTaskName,
         focusRecords,
+        focusSession,
         sendCommand,
       }),
     },
@@ -217,14 +271,49 @@ function buildContextMenuTemplate({
   return status ? [status, { type: "separator" }, ...template] : template;
 }
 
-function buildTrayMenuTemplate({ petState, sendCommand, resetPosition, quit }) {
+function buildTrayMenuTemplate({
+  petState,
+  sendCommand,
+  resetPosition,
+  quit,
+  clockEnabled = true,
+  focusIndicatorEnabled = true,
+  petClickThroughEnabled = false,
+  musicStatusClickThroughEnabled = false,
+  focusDurationMinutes = 25,
+  breakDurationMinutes = 5,
+  longBreakDurationMinutes = 15,
+  focusRoundsBeforeLongBreak = 4,
+  pendingTaskName = "",
+  focusRecords = [],
+  focusSession = null,
+}) {
   const template = [
     { label: "👀 显示桌宠", click: () => sendCommand("show") },
     { label: "⚙ 设置", click: () => sendCommand("settings") },
+    {
+      label: "⏱ 专注",
+      submenu: focusSubmenu({
+        focusDurationMinutes,
+        breakDurationMinutes,
+        longBreakDurationMinutes,
+        focusRoundsBeforeLongBreak,
+        pendingTaskName,
+        focusRecords,
+        focusSession,
+        sendCommand,
+      }),
+    },
     { label: "↔ 重置尺寸", click: () => sendCommand("size:100") },
     { label: "⏱ 重置速度", click: () => sendCommand("speed:100") },
     { label: "📍 重置位置", click: resetPosition },
     { label: "↺ 恢复默认", click: () => sendCommand("restore-defaults") },
+    { type: "separator" },
+    { label: "🎵 打开音乐面板", click: () => sendCommand("music:open-panel") },
+    { label: "⏱ 显示时间", type: "checkbox", checked: clockEnabled, click: () => sendCommand("clock:toggle") },
+    { label: "🎯 显示专注状态", type: "checkbox", checked: focusIndicatorEnabled, click: () => sendCommand("focus-indicator:toggle") },
+    { label: "🖱 桌宠鼠标穿透", type: "checkbox", checked: petClickThroughEnabled, click: () => sendCommand("pet-click-through:toggle") },
+    { label: "🖱 音乐栏鼠标穿透", type: "checkbox", checked: musicStatusClickThroughEnabled, click: () => sendCommand("music-click-through:toggle") },
     { type: "separator" },
     { label: "⏻ 退出", click: quit },
   ];
@@ -241,5 +330,7 @@ module.exports = {
   interactionSubmenu,
   appearanceSubmenu,
   musicSubmenu,
+  focusSubmenu,
+  todayFocusSummary,
   TASK_SUBMENU_MAX,
 };

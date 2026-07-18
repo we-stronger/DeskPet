@@ -10,6 +10,7 @@ function createMusicController({
   sessionStore = defaultSessionStore,
   shellApi = shell,
   sessionCookieProvider = null,
+  onSessionChanged = () => {},
 } = {}) {
   let memorySession = null;
   let cachedProfile = null;
@@ -51,10 +52,15 @@ function createMusicController({
   function clearLocalSession() {
     memorySession = null;
     cachedProfile = null;
-    if (sessionStore && typeof sessionStore.clearSession === "function") {
-      return sessionStore.clearSession();
+    const result = sessionStore && typeof sessionStore.clearSession === "function"
+      ? sessionStore.clearSession()
+      : { success: true };
+    try {
+      onSessionChanged({ success: true, loggedIn: false });
+    } catch (_error) {
+      // Session cleanup must not fail because a renderer notification failed.
     }
-    return { success: true };
+    return result;
   }
 
   async function searchMusic({ keyword, query, limit } = {}) {

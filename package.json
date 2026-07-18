@@ -1,6 +1,6 @@
 {
   "name": "desk-play-pet",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Transparent desktop pet MVP with music panel, focus timer, and AI chat.",
   "main": "src/main.js",
@@ -9,7 +9,8 @@
   },
   "dependencies": {
     "node-fetch": "^3.3.2",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "iconv-lite": "^0.6.3"
   },
   "scripts": {
     "start": "node scripts/start-electron.js",
@@ -17,9 +18,11 @@
     "test": "node --test test/*.test.js",
     "e2e:music": "electron scripts/e2e-music-panel.js",
     "e2e:music-listen": "electron scripts/e2e-music-listen.js",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder",
-    "dist:win": "electron-builder --win"
+    "audit:release": "node scripts/release-audit.js",
+    "pack": "npm run audit:release && electron-builder --win --dir",
+    "package:portable": "node scripts/create-portable-zip.js",
+    "dist": "npm run audit:release && electron-builder",
+    "dist:win": "npm run audit:release && electron-builder --win nsis && electron-builder --win --dir && npm run package:portable"
   },
   "devDependencies": {
     "electron": "^37.4.0",

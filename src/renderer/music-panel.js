@@ -5,6 +5,7 @@
   const searchView = root.DeskpetMusicSearchView;
   const playlistView = root.DeskpetMusicPlaylistView;
   const dragApi = root.DeskpetWidgetDrag;
+  const runtimeStyle = root.DeskpetRuntimeStyle?.createRuntimeStyleManager?.(document);
   let panel = null;
   let loginWindowOpen = false;
   let currentView = "home";
@@ -13,6 +14,7 @@
   let currentPlaylistIsLiked = false;
   let pendingAddSong = null;
   let qrPollTimer = 0;
+  let operationFeedback = null;
 
   // The panel lives inside the pet's #stage and is
   // positioned via style.left / style.top. The default mirrors the
@@ -47,9 +49,11 @@
   function applyPanelPosition() {
     if (!panel) return;
     const pos = currentPosition || DEFAULT_PANEL_POSITION;
-    panel.style.left = `${pos.x}px`;
-    panel.style.top = `${pos.y}px`;
-    panel.style.right = "auto";
+    runtimeStyle?.apply(panel, "music-panel-position", {
+      left: `${pos.x}px`,
+      top: `${pos.y}px`,
+      right: "auto",
+    });
   }
 
   // Called by the renderer when a saved position arrives via the
@@ -88,6 +92,18 @@
 
   function statusText(error) {
     const map = {
+      "api-401": "登录状态无效，请重新扫码登录。",
+      "api-406": "当前账号没有权限执行此操作。",
+      "api-462": "网易云请求被限制，请稍后再试。",
+      "401": "登录状态无效，请重新扫码登录。",
+      "406": "当前账号没有权限执行此操作。",
+      "462": "网易云请求被限制，请稍后再试。",
+      auth: "请先登录网易云音乐。",
+      forbidden: "这首歌暂时无法播放。",
+      "not-found": "没有找到可用的音频资源。",
+      network: "网络连接失败，请稍后重试。",
+      unsupported: "没有可用的音频来源。",
+      cancelled: "播放请求已被新的操作替换。",
       "not-logged-in": "请先扫码登录。",
       "session-expired": "登录状态过期了。",
       "safe-storage-unavailable": "当前系统不可用安全存储，本次登录不会在重启后保留。",
@@ -97,6 +113,22 @@
       "open-failed": "打开网易云失败。",
     };
     return map[error] || (error ? `操作失败：${error}` : "操作失败。");
+  }
+
+  async function runBusyAction(button, action) {
+    if (button && button.disabled) return null;
+    if (button) {
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+    }
+    try {
+      return await action();
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+      }
+    }
   }
 
   function escapeHtml(value) {
@@ -138,18 +170,37 @@
     }));
   }
 
-  function setStatus(text, tone) {
+  function setStatus(text, tone, { actionLabel = "", onAction = null } = {}) {
     const el = panel && panel.querySelector("#music-panel-status");
     if (!el) return;
-    el.textContent = text || "";
     if (tone) el.dataset.tone = tone;
     else delete el.dataset.tone;
+    if (!operationFeedback) {
+      el.textContent = text || "";
+      return;
+    }
+    if (!text) {
+      operationFeedback.clear();
+    } else if (tone === "error") {
+      operationFeedback.error(text, { actionLabel, onAction });
+    } else if (tone === "ok") {
+      operationFeedback.success(text);
+    } else {
+      operationFeedback.info(text);
+    }
   }
 
   function setContent(html) {
     const el = panel && panel.querySelector("#music-panel-content");
     if (!el) return;
     el.innerHTML = html;
+    el.querySelectorAll("img[data-cover-url]").forEach((image) => {
+      image.addEventListener("error", () => {
+        image.hidden = true;
+        const placeholder = image.nextElementSibling;
+        if (placeholder) placeholder.hidden = false;
+      }, { once: true });
+    });
     bindContentActions();
     refreshLikedButtons();
     notifyShapeChanged();
@@ -174,10 +225,13 @@
         <svg aria-hidden="true" viewBox="0 0 20 20" width="16" height="16"><path d="M5.5 5.5 14.5 14.5M14.5 5.5 5.5 14.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
       </button>
     </div>
-    <div id="music-panel-status" class="music-panel-status" aria-live="polite"></div>
+    <div id="music-panel-status" class="music-panel-status operation-feedback" data-operation-feedback aria-live="polite"></div>
     <div id="music-panel-actions" class="music-panel-actions"></div>
     <div id="music-panel-content" class="music-panel-content"></div>`;
     document.querySelector("#stage")?.appendChild(panel);
+    operationFeedback = typeof root.OperationFeedback === "function"
+      ? new root.OperationFeedback({ host: panel.querySelector("#music-panel-status") })
+      : null;
     panel.querySelector("#music-panel-close")?.addEventListener("click", close);
     // The pet's #stage element captures pointerdown with setPointerCapture
     // and starts drag/tap interaction, which swallows clicks on anything
@@ -207,9 +261,11 @@
           },
           onMove: ({ x, y }) => {
             const clamped = clampPanelPosition({ x, y });
-            panel.style.left = `${clamped.x}px`;
-            panel.style.top = `${clamped.y}px`;
-            panel.style.right = "auto";
+            runtimeStyle?.apply(panel, "music-panel-position", {
+              left: `${clamped.x}px`,
+              top: `${clamped.y}px`,
+              right: "auto",
+            });
           },
           onEnd: ({ x, y }) => {
             panel.classList.remove("is-dragging");
@@ -271,7 +327,6 @@
       : null;
     const sessionLoggedIn = !!(session && session.loggedIn);
     const profile = typeof bridge.getProfile === "function" ? await bridge.getProfile().catch(() => null) : null;
-    console.debug("[music-panel] refreshProfile session=", JSON.stringify(session), "profile=", JSON.stringify(profile).slice(0, 200));
     if (profile && profile.success && profile.profile) {
       setLoggedInActions(profile.profile.nickname || "已登录");
       return true;
@@ -283,7 +338,7 @@
       // so they can use the panel, and surface the error in the status
       // line.
       if (profile && profile.error) {
-        console.warn("[music-panel] getProfile failed:", profile.error);
+        console.warn("[music-panel] profile request failed", { code: profile.error });
       }
       setLoggedInActions(null);
       return true;
@@ -368,7 +423,10 @@
     setStatus("正在加载歌单...", "info");
     const result = await bridge.getUserPlaylists?.().catch(() => null);
     if (!(result && result.success && Array.isArray(result.playlists))) {
-      setStatus(statusText((result && result.error) || "network-error"), "error");
+      setStatus(statusText((result && result.error) || "network-error"), "error", {
+        actionLabel: "重试",
+        onAction: () => showAddToPlaylistChooser(song),
+      });
       return;
     }
     const rows = result.playlists
@@ -397,7 +455,7 @@
         const song = songFromActionButton(button);
         if (!song.id || typeof bridge.likeSong !== "function") return;
         const nextLiked = button.getAttribute("aria-pressed") !== "true";
-        const result = await bridge.likeSong(song.id, nextLiked).catch(() => null);
+        const result = await runBusyAction(button, () => bridge.likeSong(song.id, nextLiked).catch(() => null));
         if (result && result.success) setLikedButtonState(button, nextLiked);
         setStatus(
           result && result.success ? (nextLiked ? "已加入我喜欢。" : "已取消喜欢。") : statusText((result && result.error) || "open-failed"),
@@ -436,7 +494,7 @@
           return;
         }
         if (!confirmPlaylistSongRemoval(song)) return;
-        const result = await bridge.manipulatePlaylistTracks({ op: "del", playlistId: currentPlaylistId, songIds: [song.id] }).catch(() => null);
+        const result = await runBusyAction(button, () => bridge.manipulatePlaylistTracks({ op: "del", playlistId: currentPlaylistId, songIds: [song.id] }).catch(() => null));
         if (result && result.success) {
           button.closest(".music-panel-song")?.remove();
           setStatus("已从歌单删除。", "ok");
@@ -450,7 +508,7 @@
       button.addEventListener("click", async () => {
         const playlistId = button.getAttribute("data-playlist-id");
         if (!pendingAddSong || !playlistId || typeof bridge.manipulatePlaylistTracks !== "function") return;
-        const result = await bridge.manipulatePlaylistTracks({ op: "add", playlistId, songIds: [pendingAddSong.id] }).catch(() => null);
+        const result = await runBusyAction(button, () => bridge.manipulatePlaylistTracks({ op: "add", playlistId, songIds: [pendingAddSong.id] }).catch(() => null));
         if (result && result.success) {
           pendingAddSong = null;
           await showPlaylists();
@@ -468,7 +526,7 @@
         const song = songFromActionButton(button);
         const title = song.title;
         const artist = song.artist;
-        const result = await root.DeskpetMusicPlaybackService.playSongWithFallback(id, {
+        const result = await runBusyAction(button, () => root.DeskpetMusicPlaybackService.playSongWithFallback(id, {
           bridge,
           audioPlayer: root.DeskpetAudioPlayer,
           queue: queueFromCurrentSongList(),
@@ -476,7 +534,7 @@
           meta: { title, artist, liked: song.liked === true },
           setStatus,
           logger: root.console,
-        });
+        }));
         if (result && result.success) {
           const isAudioPlayback = result.method === "audio" || result.method === "audio-host" || result.method === "web-player";
           const visibleWebFallback = result.method === "web-player-visible";
@@ -580,6 +638,8 @@
   }
 
   async function startQrLogin() {
+    const trigger = panel?.querySelector("#music-panel-login-btn, #music-panel-refresh-qr");
+    if (trigger?.disabled) return;
     stopQrPolling();
     setStatus("正在准备扫码登录...", "info");
     setContent('<div class="music-panel-qr music-panel-loading">正在生成二维码...</div>');
@@ -648,10 +708,28 @@
 
   async function logout() {
     stopQrPolling();
-    await bridge.logoutMusic?.().catch(() => null);
+    const button = panel?.querySelector("#music-panel-logout-btn");
+    await runBusyAction(button, () => bridge.logoutMusic?.().catch(() => null));
     await refreshProfile();
     setStatus("已退出登录。", "info");
     setContent('<div class="music-panel-empty">已清除本地登录态。</div>');
+  }
+
+  if (typeof bridge.onMusicAuthStateChanged === "function") {
+    bridge.onMusicAuthStateChanged(async (state) => {
+      if (!panel || panel.hidden) return;
+      const loggedIn = state && state.loggedIn === true;
+      const current = await refreshProfile();
+      if (!loggedIn || !current) {
+        currentView = "home";
+        currentPlaylistId = "";
+        currentPlaylistName = "";
+        setContent('<div class="music-panel-empty">请先登录网易云音乐。</div>');
+        setStatus("已退出登录", "info");
+        return;
+      }
+      setStatus("登录状态已更新", "ok");
+    });
   }
 
   async function runSearch() {
@@ -669,7 +747,10 @@
     setStatus("我帮你找找。", "info");
     const result = await bridge.searchMusic(keyword, 20).catch(() => null);
     if (!result || !result.success) {
-      setStatus(statusText((result && result.error) || "network-error"), "error");
+      setStatus(statusText((result && result.error) || "network-error"), "error", {
+        actionLabel: "重试",
+        onAction: () => runSearch(),
+      });
       setContent(searchView.renderSongList([], { emptyText: "没有找到结果。" }));
       bubble("没有找到结果。");
       return;
@@ -687,15 +768,14 @@
     setStatus("正在获取歌单...", "info");
     setContent('<div class="music-panel-loading">加载歌单中...</div>');
     const result = await bridge.getUserPlaylists().catch((err) => {
-      console.warn("[music-panel] getUserPlaylists threw:", err);
+      console.warn("[music-panel] playlist request failed", { message: err?.message || "unknown" });
       return null;
     });
-    // Diagnostic — renderer's DevTools console shows the actual error
-    // code NetEase returned, so we can pair it with the main-process log
-    // in `netease-client.js` to figure out what's broken.
-    console.warn("[music-panel] getUserPlaylists result:", JSON.stringify(result));
     if (!result || !result.success) {
-      setStatus(statusText((result && result.error) || "network-error"), "error");
+      setStatus(statusText((result && result.error) || "network-error"), "error", {
+        actionLabel: "重试",
+        onAction: () => showPlaylists(),
+      });
       setContent('<div class="music-panel-empty">请先扫码登录后查看歌单。</div>');
       bubble((result && result.error) === "not-logged-in" ? "登录状态过期了。" : "好像没连上。");
       return;
@@ -713,7 +793,10 @@
     setContent('<div class="music-panel-loading">加载歌单详情...</div>');
     const result = await bridge.getPlaylistDetail(playlistId).catch(() => null);
     if (!result || !result.success) {
-      setStatus(statusText((result && result.error) || "network-error"), "error");
+      setStatus(statusText((result && result.error) || "network-error"), "error", {
+        actionLabel: "重试",
+        onAction: () => showPlaylistDetail(playlistId),
+      });
       setContent('<div class="music-panel-empty">获取歌单详情失败。</div>');
       bubble("好像没连上。");
       return;
@@ -732,10 +815,6 @@
     currentView = view || "home";
     setStatus("", null);
     const loggedIn = await refreshProfile();
-    // Surface a trace in the renderer console when running with
-    // DevTools open (`DESKPET_DEVTOOLS=1`) so we can confirm in the
-    // field which branch the panel ended up in.
-    console.debug("[music-panel] open() view=", view, "loggedIn=", loggedIn, "loginWindowOpen=", loginWindowOpen);
     // If the login window is open and we just became logged in, the
     // `music:login-completed` command triggered this open(). Show the
     // success message instead of the default landing copy.

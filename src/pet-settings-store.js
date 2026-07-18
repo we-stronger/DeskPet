@@ -27,9 +27,17 @@ const defaultPetSettings = Object.freeze({
   dailyGreetingEnabled: true,
   focusDurationMinutes: 25,
   breakDurationMinutes: 5,
+  longBreakDurationMinutes: 15,
+  focusRoundsBeforeLongBreak: 4,
+  focusNotificationsEnabled: true,
+  focusSoundEnabled: false,
+  focusPetReactionsEnabled: true,
+  focusConfirmInterrupt: true,
+  focusSession: null,
   pendingTaskName: "",
   focusRecords: Object.freeze([]),
   clockEnabled: true,
+  clockOpacityPercent: 100,
   clockDisplayMode: "floating",
   focusIndicatorEnabled: true,
   focusDisplayMode: "floating",
@@ -69,8 +77,18 @@ const defaultPetSettings = Object.freeze({
   }),
 });
 
-const FOCUS_RECORD_MAX = 50;
+const FOCUS_RECORD_MAX = 500;
 const TASK_NAME_MAX = 60;
+const FOCUS_SESSION_VERSION = 1;
+const FOCUS_PHASES = new Set([
+  "focus",
+  "short-break",
+  "long-break",
+  "waiting-for-break",
+  "waiting-for-focus",
+]);
+const FOCUS_STATUSES = new Set(["running", "paused", "waiting"]);
+const FOCUS_RESULTS = new Set(["completed", "interrupted", "skipped"]);
 
 function normalizePercent(value) {
   const percent = Number(value);
@@ -92,6 +110,14 @@ function normalizeMusicStatusOpacityPercent(value) {
   const percent = Number(value);
   if (!Number.isFinite(percent) || percent < 20 || percent > 100) {
     return defaultPetSettings.musicStatusOpacityPercent;
+  }
+  return Math.round(percent);
+}
+
+function normalizeClockOpacityPercent(value) {
+  const percent = Number(value);
+  if (!Number.isFinite(percent) || percent < 20 || percent > 100) {
+    return defaultPetSettings.clockOpacityPercent;
   }
   return Math.round(percent);
 }
@@ -185,12 +211,48 @@ function normalizeFocusRecord(record) {
   if (!record || typeof record !== "object") {
     return null;
   }
-  const task = typeof record.task === "string" ? record.task.slice(0, TASK_NAME_MAX) : "";
+  const task = typeof record.task === "string"
+    ? record.task.slice(0, TASK_NAME_MAX)
+    : typeof record.taskName === "string"
+      ? record.taskName.slice(0, TASK_NAME_MAX)
+      : "";
   const focusDurationMs = Number(record.focusDurationMs);
+  const completedAt = typeof record.completedAt === "string" ? record.completedAt : "";
+  const richRecord = typeof record.id === "string"
+    && record.id
+    && typeof record.sessionId === "string"
+    && record.sessionId
+    && FOCUS_PHASES.has(record.phase)
+    && FOCUS_RESULTS.has(record.result);
+  if (richRecord) {
+    const plannedDurationMs = Number(record.plannedDurationMs);
+    const actualDurationMs = Number(record.actualDurationMs);
+    const startedAt = Number(record.startedAt);
+    if (!Number.isFinite(plannedDurationMs) || plannedDurationMs <= 0
+      || !Number.isFinite(actualDurationMs) || actualDurationMs < 0
+      || !Number.isFinite(focusDurationMs) || focusDurationMs < 0
+      || !Number.isFinite(startedAt)) {
+      return null;
+    }
+    return {
+      id: record.id,
+      transitionKey: typeof record.transitionKey === "string" ? record.transitionKey : "",
+      sessionId: record.sessionId,
+      task,
+      taskName: typeof record.taskName === "string" ? record.taskName.slice(0, TASK_NAME_MAX) : task,
+      phase: record.phase,
+      result: record.result,
+      plannedDurationMs,
+      actualDurationMs,
+      focusDurationMs,
+      startedAt,
+      completedAt,
+      roundNumber: Math.max(0, Math.round(Number(record.roundNumber) || 0)),
+    };
+  }
   if (!Number.isFinite(focusDurationMs) || focusDurationMs <= 0) {
     return null;
   }
-  const completedAt = typeof record.completedAt === "string" ? record.completedAt : "";
   return { task, focusDurationMs, completedAt };
 }
 
@@ -206,6 +268,63 @@ function normalizeFocusRecords(records) {
 
 function normalizeWidgetDisplayMode(value) {
   return value === "music" || value === "hidden" ? value : "floating";
+}
+
+function normalizeFocusSession(session) {
+  if (!session || typeof session !== "object" || session.version !== FOCUS_SESSION_VERSION) {
+    return null;
+  }
+  if (typeof session.sessionId !== "string" || !session.sessionId
+    || !FOCUS_PHASES.has(session.phase)
+    || !FOCUS_STATUSES.has(session.status)) {
+    return null;
+  }
+  const requiredNumbers = [
+    "startedAt",
+    "phaseStartedAt",
+    "plannedDurationMs",
+    "focusDurationMs",
+    "shortBreakDurationMs",
+    "longBreakDurationMs",
+    "roundsBeforeLongBreak",
+    "completedFocusRounds",
+    "updatedAt",
+  ];
+  if (requiredNumbers.some((key) => !Number.isFinite(Number(session[key])))) {
+    return null;
+  }
+  const endsAt = session.endsAt == null ? null : Number(session.endsAt);
+  const pausedRemainingMs = session.pausedRemainingMs == null
+    ? null
+    : Number(session.pausedRemainingMs);
+  if ((endsAt != null && !Number.isFinite(endsAt))
+    || (pausedRemainingMs != null && !Number.isFinite(pausedRemainingMs))) {
+    return null;
+  }
+  const suggestedBreakPhase = session.suggestedBreakPhase === "short-break"
+    || session.suggestedBreakPhase === "long-break"
+    ? session.suggestedBreakPhase
+    : null;
+  return {
+    version: FOCUS_SESSION_VERSION,
+    revision: Math.max(0, Math.round(Number(session.revision) || 0)),
+    sessionId: session.sessionId,
+    taskName: typeof session.taskName === "string" ? session.taskName.slice(0, TASK_NAME_MAX) : "",
+    phase: session.phase,
+    status: session.status,
+    startedAt: Number(session.startedAt),
+    phaseStartedAt: Number(session.phaseStartedAt),
+    endsAt,
+    pausedRemainingMs,
+    plannedDurationMs: Number(session.plannedDurationMs),
+    completedFocusRounds: Math.max(0, Math.round(Number(session.completedFocusRounds))),
+    roundsBeforeLongBreak: Math.max(1, Math.round(Number(session.roundsBeforeLongBreak))),
+    focusDurationMs: Number(session.focusDurationMs),
+    shortBreakDurationMs: Number(session.shortBreakDurationMs),
+    longBreakDurationMs: Number(session.longBreakDurationMs),
+    suggestedBreakPhase,
+    updatedAt: Number(session.updatedAt),
+  };
 }
 
 function normalizePetState(state = {}) {
@@ -267,6 +386,31 @@ function normalizePetSettings(settings = {}) {
       1,
       60,
     ),
+    longBreakDurationMinutes: normalizeFocusDurationMinutes(
+      settings.longBreakDurationMinutes,
+      defaultPetSettings.longBreakDurationMinutes,
+      1,
+      120,
+    ),
+    focusRoundsBeforeLongBreak: normalizeFocusDurationMinutes(
+      settings.focusRoundsBeforeLongBreak,
+      defaultPetSettings.focusRoundsBeforeLongBreak,
+      1,
+      12,
+    ),
+    focusNotificationsEnabled: typeof settings.focusNotificationsEnabled === "boolean"
+      ? settings.focusNotificationsEnabled
+      : defaultPetSettings.focusNotificationsEnabled,
+    focusSoundEnabled: typeof settings.focusSoundEnabled === "boolean"
+      ? settings.focusSoundEnabled
+      : defaultPetSettings.focusSoundEnabled,
+    focusPetReactionsEnabled: typeof settings.focusPetReactionsEnabled === "boolean"
+      ? settings.focusPetReactionsEnabled
+      : defaultPetSettings.focusPetReactionsEnabled,
+    focusConfirmInterrupt: typeof settings.focusConfirmInterrupt === "boolean"
+      ? settings.focusConfirmInterrupt
+      : defaultPetSettings.focusConfirmInterrupt,
+    focusSession: normalizeFocusSession(settings.focusSession),
     pendingTaskName: typeof settings.pendingTaskName === "string"
       ? settings.pendingTaskName.slice(0, TASK_NAME_MAX)
       : defaultPetSettings.pendingTaskName,
@@ -274,6 +418,7 @@ function normalizePetSettings(settings = {}) {
     clockEnabled: typeof settings.clockEnabled === "boolean"
       ? settings.clockEnabled
       : defaultPetSettings.clockEnabled,
+    clockOpacityPercent: normalizeClockOpacityPercent(settings.clockOpacityPercent),
     clockDisplayMode: normalizeWidgetDisplayMode(settings.clockDisplayMode),
     focusIndicatorEnabled: typeof settings.focusIndicatorEnabled === "boolean"
       ? settings.focusIndicatorEnabled

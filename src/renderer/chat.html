@@ -3,8 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https: http://*.music.126.net; media-src 'self' http://127.0.0.1:* https://*.music.126.net; connect-src 'self'; object-src 'none'; base-uri 'none';" />
     <title>和我聊聊 · Desk Pet</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles/base.css" />
+    <link rel="stylesheet" href="./styles/chat.css" />
   </head>
   <body class="chat-window">
     <main class="chat-window__main" aria-label="和我聊聊">
@@ -68,8 +70,10 @@
         <textarea id="chat-input" class="chat-window__input" rows="2" placeholder="说点什么…" autocomplete="off"></textarea>
         <button id="chat-send" class="chat-window__send" type="submit">发送</button>
       </form>
+      <div class="operation-feedback" data-operation-feedback role="status" aria-live="polite"></div>
       <div id="chat-status" class="chat-window__status" role="status" aria-live="polite"></div>
     </main>
+    <script src="./operation-feedback.js"></script>
     <script src="./chat.js"></script>
   </body>
 </html>

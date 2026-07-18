@@ -1,4 +1,8 @@
 (function attachWidgetCoordination(root) {
+  const widgetState = typeof require === "function"
+    ? require("./widget-state")
+    : root.DeskpetWidgetState;
+
   function clampPosition(position = {}, size = {}, stage = {}) {
     const width = Math.max(0, Number(size.width) || 0);
     const height = Math.max(0, Number(size.height) || 0);
@@ -24,37 +28,42 @@
       .find((candidate) => occupied.every((item) => !overlaps(candidate, size, item.position, item.size))) || saved;
   }
 
-  function resolveWidgetPositions({ stage, music, focus, clock } = {}) {
+  function resolveWidgetLayout({ stage, widgets = [] } = {}) {
     const result = {};
     const occupied = [];
-    if (music && music.visible) {
-      result.music = clampPosition(music.position, music.size, stage);
-      occupied.push({ position: result.music, size: music.size });
-    }
-    if (focus && focus.visible) {
-      const saved = clampPosition(focus.position, focus.size, stage);
-      const candidates = result.music
-        ? [
-          saved,
-          { x: result.music.x, y: result.music.y - focus.size.height - 8 },
-          { x: result.music.x + music.size.width + 8, y: result.music.y },
-        ]
-        : [saved];
-      result.focus = firstFreePosition(candidates, focus.size, stage, occupied);
-      occupied.push({ position: result.focus, size: focus.size });
-    }
-    if (clock && clock.visible) {
-      const saved = clampPosition(clock.position, clock.size, stage);
-      result.clock = firstFreePosition([
-        saved,
-        { x: 8, y: 8 },
-        { x: (Number(stage && stage.width) || 0) - clock.size.width - 8, y: 8 },
-      ], clock.size, stage, occupied);
+    const ordered = (Array.isArray(widgets) ? widgets : [])
+      .map((widget) => widgetState.normalizeWidgetState(widget))
+      .filter((widget) => widget.visible && widget.id && widget.size)
+      .slice()
+      .sort((a, b) => (Number(a.priority) || 0) - (Number(b.priority) || 0));
+
+    for (const widget of ordered) {
+      const saved = clampPosition(widget.position, widget.size, stage);
+      const candidates = [saved];
+      for (const item of occupied) {
+        candidates.push(
+          { x: item.position.x, y: item.position.y - widget.size.height - 8 },
+          { x: item.position.x + item.size.width + 8, y: item.position.y },
+        );
+      }
+      result[widget.id] = firstFreePosition(candidates, widget.size, stage, occupied);
+      occupied.push({ position: result[widget.id], size: widget.size });
     }
     return result;
   }
 
-  const api = { clampPosition, overlaps, resolveWidgetPositions };
+  function resolveWidgetPositions({ stage, music, focus, clock } = {}) {
+    return resolveWidgetLayout({
+      stage,
+      widgets: [
+        { id: "music", priority: 0, ...music },
+        { id: "focus", priority: 1, ...focus },
+        { id: "clock", priority: 2, ...clock },
+      ],
+    });
+  }
+
+  const api = { clampPosition, overlaps, resolveWidgetLayout, resolveWidgetPositions };
   if (root) root.DeskpetWidgetCoordination = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

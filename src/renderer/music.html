@@ -3,8 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https: http://*.music.126.net; media-src 'self' http://127.0.0.1:* https://*.music.126.net; connect-src 'self'; object-src 'none'; base-uri 'none';" />
     <title>网易云音乐 · Desk Pet</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles/base.css" />
+    <link rel="stylesheet" href="./styles/music.css" />
   </head>
   <body class="music-window">
     <main class="music-window__main" aria-label="网易云音乐">
@@ -33,13 +35,16 @@
         <button id="music-window-back-btn" type="button" class="music-window__back-btn">← 返回</button>
         <span id="music-window-nav-title" class="music-window__nav-title"></span>
       </div>
+      <div class="operation-feedback" data-operation-feedback role="status" aria-live="polite"></div>
       <div id="music-window-status" class="music-window__status" aria-live="polite"></div>
       <div id="music-window-content" class="music-window__content"></div>
     </main>
     <script src="./music-search-view.js"></script>
     <script src="./music-playlist-view.js"></script>
     <script src="./audio-player.js"></script>
+    <script src="../music/media-error.js"></script>
     <script src="./music-playback-service.js"></script>
+    <script src="./operation-feedback.js"></script>
     <script src="./music.js"></script>
   </body>
 </html>

@@ -1,18 +1,19 @@
 const https = require("node:https");
 const { URLSearchParams } = require("node:url");
+const { decodeResponseBuffer, repairMojibake } = require("../text-normalize");
 
 const API_BASE = "https://music.163.com";
 const REQUEST_TIMEOUT_MS = 8000;
 
 function normalizeArtistList(raw) {
   const list = Array.isArray(raw && raw.ar) ? raw.ar : Array.isArray(raw && raw.artists) ? raw.artists : [];
-  return list.map((item) => (item && typeof item.name === "string" ? item.name.trim() : "")).filter(Boolean);
+  return list.map((item) => (item && typeof item.name === "string" ? repairMojibake(item.name).trim() : "")).filter(Boolean);
 }
 
 function normalizeSong(raw, privilege) {
   if (!raw || typeof raw !== "object") return null;
   const id = raw.id;
-  const name = typeof raw.name === "string" ? raw.name.trim() : "";
+  const name = typeof raw.name === "string" ? repairMojibake(raw.name).trim() : "";
   if ((typeof id !== "number" && typeof id !== "string") || !name) return null;
   const albumObj = raw.al || raw.album || {};
   const duration = Number.isFinite(raw.dt) ? raw.dt : Number.isFinite(raw.duration) ? raw.duration : null;
@@ -22,7 +23,8 @@ function normalizeSong(raw, privilege) {
     id,
     name,
     artists: normalizeArtistList(raw),
-    album: typeof albumObj.name === "string" ? albumObj.name.trim() : "",
+    album: typeof albumObj.name === "string" ? repairMojibake(albumObj.name).trim() : "",
+    coverUrl: typeof albumObj.picUrl === "string" ? albumObj.picUrl : (typeof raw.picUrl === "string" ? raw.picUrl : ""),
     duration,
     playable,
   };
@@ -31,7 +33,7 @@ function normalizeSong(raw, privilege) {
 function normalizePlaylist(raw, ownerUserId) {
   if (!raw || typeof raw !== "object") return null;
   const id = raw.id;
-  const name = typeof raw.name === "string" ? raw.name.trim() : "";
+  const name = typeof raw.name === "string" ? repairMojibake(raw.name).trim() : "";
   if ((typeof id !== "number" && typeof id !== "string") || !name) return null;
   const creatorId = raw.creator && (raw.creator.userId ?? raw.creator.id);
   const hasOwnerContext = ownerUserId !== undefined && ownerUserId !== null && ownerUserId !== "";
@@ -40,7 +42,7 @@ function normalizePlaylist(raw, ownerUserId) {
     name,
     trackCount: Number.isFinite(raw.trackCount) ? raw.trackCount : 0,
     coverImgUrl: typeof raw.coverImgUrl === "string" ? raw.coverImgUrl : "",
-    creator: raw.creator && typeof raw.creator.nickname === "string" ? raw.creator.nickname : "",
+    creator: raw.creator && typeof raw.creator.nickname === "string" ? repairMojibake(raw.creator.nickname) : "",
     creatorId,
     specialType: Number.isFinite(Number(raw.specialType)) ? Number(raw.specialType) : 0,
     editable: hasOwnerContext
@@ -71,9 +73,9 @@ function normalizeProfile(raw) {
   ];
   const userId = candidates.find((v) => typeof v === "number" || typeof v === "string");
   if (userId === undefined) return null;
-  const nickname = (profileObj && profileObj.nickname)
+  const nickname = repairMojibake((profileObj && profileObj.nickname)
     || (accountObj && (accountObj.userName || accountObj.nickname))
-    || "网易云用户";
+    || "网易云用户");
   const avatarUrl = (profileObj && profileObj.avatarUrl) || "";
   return { userId, nickname, avatarUrl };
 }
@@ -122,7 +124,7 @@ function defaultRequest({ method, path, body, headers, timeoutMs }) {
       const chunks = [];
       res.on("data", (chunk) => chunks.push(chunk));
       res.on("end", () => {
-        const text = Buffer.concat(chunks).toString("utf8");
+        const text = decodeResponseBuffer(Buffer.concat(chunks), res.headers);
         try {
           resolve({ statusCode: res.statusCode, headers: res.headers, json: JSON.parse(text), body: text });
         } catch (_error) {
@@ -245,7 +247,7 @@ function extractCsrf(cookie) {
 function normalizeChart(raw) {
   if (!raw || typeof raw !== "object") return null;
   const id = raw.id;
-  const name = typeof raw.name === "string" ? raw.name.trim() : "";
+  const name = typeof raw.name === "string" ? repairMojibake(raw.name).trim() : "";
   if ((typeof id !== "number" && typeof id !== "string") || !name) return null;
   return {
     id,
@@ -314,7 +316,11 @@ async function getLyric(songId, { cookie, request } = {}) {
     if (!lrc && !tlyric) {
       return { success: false, error: mapApiError(res.json, "getLyric"), lyric: "", tlyric: "" };
     }
-    return { success: true, lyric: lrc, tlyric };
+    return {
+      success: true,
+      lyric: repairMojibake(lrc),
+      tlyric: repairMojibake(tlyric),
+    };
   } catch (error) {
     return { success: false, error: (error && error.message) || "network-error", lyric: "", tlyric: "" };
   }

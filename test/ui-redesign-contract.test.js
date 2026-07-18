@@ -4,8 +4,20 @@ const path = require("node:path");
 const test = require("node:test");
 
 const { buildContextMenuTemplate } = require("../src/pet-menu-template");
+const {
+  attributeValue,
+  elements,
+  hasClass,
+  parseHtml,
+} = require("./helpers/html-fixture");
 
 const root = path.join(__dirname, "..");
+
+function readRendererStyles(...names) {
+  return names
+    .map((name) => fs.readFileSync(path.join(root, "src", "renderer", "styles", `${name}.css`), "utf8"))
+    .join("\n");
+}
 
 function actionableCommands(items) {
   const commands = [];
@@ -20,6 +32,68 @@ function actionableCommands(items) {
   };
   return { commands, walk };
 }
+
+test("standalone settings use the settings navigation layout container", () => {
+  const document = parseHtml(fs.readFileSync(path.join(root, "src", "renderer", "settings.html"), "utf8"));
+  const layouts = elements(document).filter((node) => hasClass(node, "settings-window__layout"));
+
+  assert.equal(
+    layouts.length,
+    1,
+    "settings.html should expose exactly one settings-window__layout container"
+  );
+});
+
+test("standalone settings expose all six navigation destinations", () => {
+  const document = parseHtml(fs.readFileSync(path.join(root, "src", "renderer", "settings.html"), "utf8"));
+  const destinations = ["appearance", "widgets", "music", "focus", "llm", "data"];
+  const layouts = elements(document).filter((node) => hasClass(node, "settings-window__layout"));
+  assert.equal(layouts.length, 1, "six-section navigation requires exactly one settings layout");
+  const layout = layouts[0];
+  const tabLists = elements(layout, { attributes: { role: "tablist" } });
+  assert.equal(tabLists.length, 1, "settings layout should contain exactly one tablist");
+  const tabs = elements(tabLists[0], { attributes: { role: "tab" } });
+  const panels = elements(layout, { attributes: { role: "tabpanel" } });
+  const allTabs = elements(document, { attributes: { role: "tab" } });
+  const allPanels = elements(document, { attributes: { role: "tabpanel" } });
+  assert.ok(allTabs.every((node) => tabs.includes(node)), "all settings tabs should be inside the layout tablist");
+  assert.ok(allPanels.every((node) => panels.includes(node)), "all settings panels should be inside the same layout");
+  const tabValues = tabs.map((node) => attributeValue(node, "data-tab"));
+  const panelValues = panels.map((node) => attributeValue(node, "data-panel"));
+
+  assert.equal(new Set(tabValues).size, tabValues.length, "settings tab destinations should be unique");
+  assert.equal(new Set(panelValues).size, panelValues.length, "settings panel destinations should be unique");
+
+  assert.deepEqual(
+    tabValues,
+    destinations,
+    "settings navigation should expose exactly six unique tabs in the expected order"
+  );
+  assert.deepEqual(
+    panelValues,
+    destinations,
+    "settings navigation should expose exactly six unique panels in the expected order"
+  );
+});
+
+test("focus settings do not own widget and automation controls", () => {
+  const document = parseHtml(fs.readFileSync(path.join(root, "src", "renderer", "settings.html"), "utf8"));
+  const layouts = elements(document).filter((node) => hasClass(node, "settings-window__layout"));
+  assert.equal(layouts.length, 1, "focus ownership requires exactly one settings layout");
+  const focusPanels = elements(layouts[0], {
+    attributes: { role: "tabpanel", "data-panel": "focus" },
+  });
+  assert.equal(focusPanels.length, 1, "settings layout should contain exactly one focus panel");
+  const focusPanel = focusPanels[0];
+  const wronglyOwnedControls = ["settings-clock-display-mode", "settings-auto-walk"]
+    .filter((id) => elements(focusPanel, { attributes: { id } }).length > 0);
+
+  assert.deepEqual(
+    wronglyOwnedControls,
+    [],
+    "widget and automation controls should live outside the focus panel"
+  );
+});
 
 test("context menu is grouped into compact feature sections", () => {
   const commands = [];
@@ -63,20 +137,49 @@ test("renderer markup exposes compact settings structure without changing contro
   }
 });
 
-test("focus settings expose quick task naming and widget display placement controls", () => {
+test("focus settings expose widget display placement controls", () => {
   const html = fs.readFileSync(path.join(root, "src", "renderer", "index.html"), "utf8");
 
-  assert.match(html, /class="focus-task-presets"/);
-  assert.match(html, /data-focus-task="学习"/);
-  assert.match(html, /data-focus-task="写代码"/);
+  assert.match(html, /id="focus-task-summary"/);
+  assert.match(html, /id="task-name-input"/);
   assert.match(html, /id="clock-display-mode-input"/);
   assert.match(html, /id="focus-indicator-enabled-input"/);
   assert.match(html, /id="focus-display-mode-input"/);
   assert.match(html, /value="music"[^>]*>歌词栏/);
 });
 
+test("standalone focus settings expose cycle and companion controls", () => {
+  const html = fs.readFileSync(path.join(root, "src", "renderer", "settings.html"), "utf8");
+  const source = fs.readFileSync(path.join(root, "src", "renderer", "settings.js"), "utf8");
+
+  for (const id of [
+    "settings-long-break-min",
+    "settings-focus-rounds",
+    "settings-focus-notifications",
+    "settings-focus-sound",
+    "settings-focus-pet-reactions",
+    "settings-focus-confirm-interrupt",
+  ]) {
+    assert.match(html, new RegExp(`id=["']${id}["']`));
+    assert.match(source, new RegExp(id));
+  }
+  assert.match(html, /每个阶段完成后等待确认/);
+});
+
+test("renderer keeps music-mode clock hidden and anchors short bubbles at the pet top-right", () => {
+  const source = fs.readFileSync(path.join(root, "src", "renderer", "renderer.js"), "utf8");
+
+  assert.match(source, /!clockEnabled \|\| clockDisplayMode !== "floating"/);
+  assert.match(source, /clockSummaryText\(\)[\s\S]*clockEl\.hidden = true/);
+  assert.match(source, /clockEl\.dataset\.displayMode = clockDisplayMode/);
+  const css = readRendererStyles("widgets");
+  assert.match(css, /\.clock-widget\[data-display-mode="music"\][\s\S]*display:\s*none\s*!important/);
+  assert.match(source, /place\(moodBubble, bubbleAnchor, \{ yOffset: 0 \}\)/);
+  assert.doesNotMatch(source, /place\(moodBubble, bubbleAnchor, \{ yOffset: WIDGET_LAYOUT\.chatBubble\.height/);
+});
+
 test("glass UI stylesheet defines theme variables and preserves pointer event semantics", () => {
-  const css = fs.readFileSync(path.join(root, "src", "renderer", "styles.css"), "utf8");
+  const css = readRendererStyles("base", "pet", "widgets", "settings", "music");
   const preload = fs.readFileSync(path.join(root, "src", "preload.js"), "utf8");
   const main = fs.readFileSync(path.join(root, "src", "main.js"), "utf8");
   assert.match(css, /:root\s*{/);
@@ -175,6 +278,24 @@ test("focus controls expose their active state and block duplicate starts", () =
   assert.match(renderer, /breakStart\.disabled\s*=/);
   assert.match(renderer, /focusPause\.disabled\s*=/);
   assert.match(renderer, /setAttribute\("aria-pressed"/);
+});
+
+test("focus interruption confirmation applies to menu and direct controls", () => {
+  const renderer = fs.readFileSync(path.join(root, "src", "renderer", "renderer.js"), "utf8");
+
+  assert.match(renderer, /function interruptCurrentFocus\(\)/);
+  assert.match(renderer, /focusConfirmInterrupt\s*&&\s*!window\.confirm/);
+  assert.match(renderer, /interruptCurrentFocus\(\)/);
+});
+
+test("expired persisted focus phases replay one restored completion event", () => {
+  const renderer = fs.readFileSync(path.join(root, "src", "renderer", "renderer.js"), "utf8");
+  const focusRuntime = fs.readFileSync(path.join(root, "src", "renderer", "focus-runtime.js"), "utf8");
+
+  assert.match(renderer, /phase-completed-restored/);
+  assert.match(focusRuntime, /previous\.status\s*===\s*"running"/);
+  assert.match(focusRuntime, /previous\.endsAt\s*<=\s*now/);
+  assert.match(focusRuntime, /restored\?\.status\s*===\s*"waiting"/);
 });
 
 

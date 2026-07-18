@@ -6,10 +6,11 @@ const test = require("node:test");
 const root = path.join(__dirname, "..");
 
 test("settings:update broadcasts normalized settings to the running pet renderer", () => {
-  const source = fs.readFileSync(path.join(root, "src", "main.js"), "utf8");
+  const main = fs.readFileSync(path.join(root, "src", "main.js"), "utf8");
+  const source = fs.readFileSync(path.join(root, "src", "main", "ipc", "settings-ipc.js"), "utf8");
 
-  assert.match(source, /function sendSettingsToPet\(/);
-  assert.match(source, /sendPetCommand\(`settings:\$\{encodeURIComponent\(JSON\.stringify\(appSettings\)\)\}`\)/);
+  assert.match(main, /function sendSettingsToPet\(/);
+  assert.match(main, /registerSettingsIpc\(/);
   assert.match(
     source,
     /ipcMain\.handle\("settings:update"[\s\S]*sendSettingsToPet\(\)/,
@@ -36,6 +37,25 @@ test("settings window exposes lyric color and size controls", () => {
   assert.match(js, /settings-lyric-color/);
   assert.match(js, /settings-lyric-size/);
   assert.match(js, /settings-control-size/);
+});
+
+test("standalone focus settings owns task naming and recent task choices", () => {
+  const html = fs.readFileSync(path.join(root, "src", "renderer", "settings.html"), "utf8");
+  const js = fs.readFileSync(path.join(root, "src", "renderer", "settings.js"), "utf8");
+
+  assert.match(html, /id="settings-focus-task"/);
+  assert.match(html, /id="settings-focus-recent-tasks"/);
+  assert.match(js, /pendingTaskName/);
+  assert.match(js, /settings-focus-task/);
+  assert.match(js, /settings-focus-recent-tasks/);
+});
+
+test("standalone settings owns display, automation, and focus records controls", () => {
+  const html = fs.readFileSync(path.join(root, "src", "renderer", "settings.html"), "utf8");
+  assert.match(html, /id="settings-clock-enabled"/);
+  assert.match(html, /id="settings-opacity"/);
+  assert.match(html, /id="settings-auto-behavior"/);
+  assert.match(html, /id="settings-focus-records"/);
 });
 
 test("renderer applies lyric style settings and uses an expanded drag area for music status", () => {

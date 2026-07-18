@@ -15,19 +15,27 @@ built installer — they don't run these commands.
 From the project root:
 
 ```powershell
-npm.cmd run pack          # quick sanity build, no installer — release\win-unpacked\DeskPet.exe
-npm.cmd run dist:win      # full installer build — release\DeskPet-Setup-0.1.0.exe
+npm.cmd run pack          # audited unpacked build — release\win-unpacked\DeskPet.exe
+npm.cmd run dist:win      # NSIS installer + Windows portable executable
 ```
 
-`pack` is faster and good for verifying the build works without paying
-for the NSIS packaging step. The produced binary can be launched directly
-for smoke testing.
+`pack` is faster and good for verifying the build without generating installer
+artifacts. The produced binary can be launched directly for smoke testing.
 
-`dist:win` produces the actual installer that ships to end users.
+`dist:win` produces the installer and an Electron portable intermediate.
+
+## Portable delivery
+
+The supported portable release is a ZIP archive containing the complete audited
+`win-unpacked` application folder, named `DeskPet-Portable-<version>-win.zip`.
+Do not distribute a bare portable executable: users must extract the folder and
+start `DeskPet.exe` inside it. The unpacked folder bundles Electron and does
+not require Node.js on the target machine.
 
 ## What the installer does
 
-Output: `release\DeskPet-Setup-0.1.0.exe` (NSIS, ~80–120 MB).
+Output: `release\DeskPet-Setup-<version>.exe` (NSIS) plus the portable ZIP
+created from the audited unpacked application folder.
 
 - Single per-user install (no admin required)
 - Start Menu shortcut: **DeskPet**
@@ -58,6 +66,11 @@ After installation, the only steps that need a Windows user action are:
   `%APPDATA%\desk-play-pet\netease-session.json`
 
 Both survive uninstall and re-install.
+
+Before packaging, run `npm.cmd run audit:release` to check the actual package
+inputs (`package.json`, `src`, and `frames`) for cookies, API credentials,
+runtime files, and machine paths. `pack` and `dist:win` run this audit
+automatically.
 
 ## Dev-mode vs packaged paths
 

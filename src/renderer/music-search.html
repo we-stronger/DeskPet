@@ -3,8 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https: http://*.music.126.net; media-src 'self' http://127.0.0.1:* https://*.music.126.net; connect-src 'self'; object-src 'none'; base-uri 'none';" />
     <title>音乐搜索 · Desk Pet</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles/base.css" />
+    <link rel="stylesheet" href="./styles/music.css" />
   </head>
   <body class="music-search-window">
     <main class="music-search-window__main" aria-label="音乐搜索">
@@ -22,10 +24,14 @@
         />
         <button id="music-search-button" type="submit">搜索</button>
       </form>
+      <div class="operation-feedback" data-operation-feedback role="status" aria-live="polite"></div>
       <div id="music-search-status" class="music-search-status" aria-live="polite"></div>
       <ul id="music-search-results" class="music-search-results" aria-label="搜索结果"></ul>
     </main>
     <script src="./audio-player.js"></script>
+    <script src="../music/media-error.js"></script>
+    <script src="./music-playback-service.js"></script>
+    <script src="./operation-feedback.js"></script>
     <script src="./music-search.js"></script>
   </body>
 </html>

@@ -50,7 +50,16 @@
       };
       return methodLabels[result.method] || "已交给网易云处理。";
     }
-    return `播放失败：${(result && result.error) || "未知错误"}`;
+    const error = (result && result.error) || "未知错误";
+    const errorLabels = {
+      auth: "请先登录网易云音乐。",
+      forbidden: "这首歌暂时无法播放。",
+      "not-found": "没有找到可用的音频资源。",
+      network: "网络连接失败，请稍后重试。",
+      unsupported: "没有可用的音频来源。",
+      cancelled: "播放请求已被新的操作替换。",
+    };
+    return `播放失败：${errorLabels[error] || error}`;
   }
 
   function nextPlayUiState(result) {
@@ -238,6 +247,27 @@
     playInFlight = true;
     resetSiblingPlayStates(row);
     setResultPlayState(row, "playing");
+    const playbackService = root.DeskpetMusicPlaybackService;
+    if (playbackService && typeof playbackService.playSongWithFallback === "function") {
+      const title = row?.querySelector(".music-search-result__title")?.textContent?.trim() || "";
+      const artist = row?.querySelector(".music-search-result__meta")?.textContent?.split(" / ")[0]?.trim() || "";
+      let result = null;
+      try {
+        result = await playbackService.playSongWithFallback(String(songId), {
+          bridge,
+          audioPlayer: root.DeskpetAudioPlayer,
+          meta: { title, artist },
+          setStatus,
+        });
+      } catch (error) {
+        result = { success: false, error: (error && error.message) || "play-failed" };
+      }
+      const ui = nextPlayUiState(result);
+      setResultPlayState(row, ui.state);
+      setStatus(statusMessageForPlayResult(result), ui.tone);
+      playInFlight = false;
+      return;
+    }
     setStatus("正在唤起网易云...", "info");
     let result = null;
     try {

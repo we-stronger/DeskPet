@@ -6,6 +6,7 @@
   let currentMeta = null;
   let currentLyrics = [];
   let currentLyric = null;
+  let nextLyric = null;
   let isPlaying = false;
   let hasEnded = false;
   const listeners = new Set();
@@ -47,14 +48,19 @@
     });
   }
 
-  function findCurrentLyric(time) {
-    if (!currentLyrics.length || !Number.isFinite(time)) return null;
-    let active = null;
-    for (const line of currentLyrics) {
-      if (line.time <= time + 0.01) active = line;
+  function findLyricPair(time) {
+    if (!currentLyrics.length || !Number.isFinite(time)) {
+      return { current: null, next: null };
+    }
+    let currentIndex = -1;
+    for (let index = 0; index < currentLyrics.length; index += 1) {
+      if (currentLyrics[index].time <= time + 0.01) currentIndex = index;
       else break;
     }
-    return active;
+    return {
+      current: currentIndex >= 0 ? currentLyrics[currentIndex] : null,
+      next: currentLyrics[currentIndex + 1] || (currentIndex < 0 ? currentLyrics[0] : null),
+    };
   }
 
   function getState() {
@@ -65,6 +71,7 @@
       currentTime: currentAudio && Number.isFinite(currentAudio.currentTime) ? currentAudio.currentTime : 0,
       duration: currentAudio && Number.isFinite(currentAudio.duration) ? currentAudio.duration : 0,
       currentLyric: currentLyric ? { ...currentLyric } : null,
+      nextLyric: nextLyric ? { ...nextLyric } : null,
       ended: hasEnded,
     };
   }
@@ -81,12 +88,16 @@
   }
 
   function updateCurrentLyric() {
-    const next = findCurrentLyric(currentAudio && Number.isFinite(currentAudio.currentTime)
+    const pair = findLyricPair(currentAudio && Number.isFinite(currentAudio.currentTime)
       ? currentAudio.currentTime
       : 0);
-    const changed = JSON.stringify(next || null) !== JSON.stringify(currentLyric || null);
-    currentLyric = next;
-    if (changed) emitState();
+    const changed = JSON.stringify(pair.current || null) !== JSON.stringify(currentLyric || null)
+      || JSON.stringify(pair.next || null) !== JSON.stringify(nextLyric || null);
+    currentLyric = pair.current;
+    nextLyric = pair.next;
+    // Time updates also drive the status-bar progress indicator. Emit even
+    // when the lyric line stays the same so every subscriber sees one state.
+    if (changed || currentAudio) emitState();
   }
 
   function stop() {
@@ -98,6 +109,7 @@
     currentMeta = null;
     currentLyrics = [];
     currentLyric = null;
+    nextLyric = null;
     isPlaying = false;
     hasEnded = false;
     emitState();
@@ -120,6 +132,7 @@
     currentMeta = meta && typeof meta === "object" ? { ...meta } : null;
     currentLyrics = mergeLyrics(currentMeta && currentMeta.lyric, currentMeta && currentMeta.tlyric);
     currentLyric = null;
+    nextLyric = null;
     hasEnded = false;
     if (typeof audio.addEventListener === "function") {
       audio.addEventListener("timeupdate", updateCurrentLyric);
@@ -158,6 +171,24 @@
     return currentSource;
   }
 
+  function seekTo(time) {
+    if (!currentAudio || !currentSource || !Number.isFinite(Number(time))) {
+      return { success: false, error: "no-current-source", currentTime: 0 };
+    }
+    const requested = Math.max(0, Number(time));
+    const duration = Number.isFinite(currentAudio.duration) && currentAudio.duration > 0
+      ? currentAudio.duration
+      : requested;
+    const target = Math.min(requested, duration);
+    try {
+      currentAudio.currentTime = target;
+      updateCurrentLyric();
+      return { success: true, method: "audio", currentTime: target };
+    } catch (error) {
+      return { success: false, error: (error && error.message) || "seek-failed", currentTime: 0 };
+    }
+  }
+
   async function togglePlayPause() {
     if (!currentAudio || !currentSource) {
       return { success: false, error: "no-current-source", playing: false };
@@ -191,6 +222,7 @@
     playUrl,
     stop,
     getCurrentSource,
+    seekTo,
     getState,
     onStateChange,
     togglePlayPause,

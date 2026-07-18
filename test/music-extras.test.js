@@ -147,6 +147,7 @@ test("controller.getFmSong returns a song when logged in", async () => {
 
 test("controller.getFmSong clears local session on session-expired", async () => {
   const cleared = [];
+  const sessionChanges = [];
   const client = {
     getFmSong: async () => ({ success: false, error: "session-expired" }),
   };
@@ -157,9 +158,12 @@ test("controller.getFmSong clears local session on session-expired", async () =>
       saveSession: () => ({ success: true }),
       clearSession: () => { cleared.push(true); return { success: true }; },
     },
+    onSessionChanged: (status) => sessionChanges.push(status),
   });
   await ctrl.getFmSong();
   assert.equal(cleared.length, 1);
+  assert.equal(sessionChanges.length, 1);
+  assert.equal(sessionChanges[0].loggedIn, false);
 });
 
 test("controller forwards playlist write operations with saved cookie", async () => {

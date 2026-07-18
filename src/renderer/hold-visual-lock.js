@@ -1,7 +1,9 @@
 (function attachHoldVisualLock(root) {
   function createHoldVisualLock(element) {
     let locked = false;
-    let previousStyle = null;
+    const runtimeStyle = typeof document !== "undefined"
+      ? root.DeskpetRuntimeStyle?.createRuntimeStyleManager?.(document)
+      : null;
 
     function lock() {
       if (locked) {
@@ -9,19 +11,19 @@
       }
 
       const rect = element.getBoundingClientRect();
-      previousStyle = {
-        width: element.style.width,
-        height: element.style.height,
-        left: element.style.left,
-        bottom: element.style.bottom,
-        transform: element.style.transform,
-        transition: element.style.transition,
-      };
-
-      element.style.width = `${Math.round(rect.width)}px`;
-      element.style.height = `${Math.round(rect.height)}px`;
-      element.style.transform = "none";
-      element.style.transition = "none";
+      if (runtimeStyle) {
+        runtimeStyle.apply(element, "pet-hold-lock", {
+          width: `${Math.round(rect.width)}px`,
+          height: `${Math.round(rect.height)}px`,
+          transform: "none",
+          transition: "none",
+        });
+      } else {
+        element.style.width = `${Math.round(rect.width)}px`;
+        element.style.height = `${Math.round(rect.height)}px`;
+        element.style.transform = "none";
+        element.style.transition = "none";
+      }
       locked = true;
     }
 
@@ -30,16 +32,7 @@
         return;
       }
 
-      if (previousStyle) {
-        element.style.width = previousStyle.width;
-        element.style.height = previousStyle.height;
-        element.style.left = previousStyle.left;
-        element.style.bottom = previousStyle.bottom;
-        element.style.transform = previousStyle.transform;
-        element.style.transition = previousStyle.transition;
-      }
-
-      previousStyle = null;
+      if (runtimeStyle) runtimeStyle.clear(element, "pet-hold-lock");
       locked = false;
     }
 

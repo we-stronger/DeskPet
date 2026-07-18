@@ -5,7 +5,13 @@ const test = require("node:test");
 
 const { renderMusicStatusBar } = require("../src/renderer/music-status-view");
 
-test("renderMusicStatusBar includes playback, panel, and app controls", () => {
+function readRendererStyles(...names) {
+  return names
+    .map((name) => fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "styles", `${name}.css`), "utf8"))
+    .join("\n");
+}
+
+test("renderMusicStatusBar keeps one account entry for the NetEase panel", () => {
   const html = renderMusicStatusBar({ title: "NetEase Music", status: "Paused", playing: false });
 
   assert.match(html, /data-music-action="previous"/);
@@ -13,9 +19,9 @@ test("renderMusicStatusBar includes playback, panel, and app controls", () => {
   assert.match(html, /data-music-action="next"/);
   assert.match(html, /data-music-action="toggleLike"/);
   assert.match(html, /data-music-action="addToPlaylist"/);
-  assert.match(html, /data-music-action="openPanel"/);
   assert.match(html, /data-music-action="account"/);
-  assert.match(html, /data-music-action="openNetease"/);
+  assert.doesNotMatch(html, /data-music-action="openPanel"/);
+  assert.doesNotMatch(html, /data-music-action="openNetease"/);
   assert.match(html, /NetEase Music/);
   assert.match(html, /Paused/);
   assert.match(html, /❧|🍃/);
@@ -60,7 +66,7 @@ test("renderMusicStatusBar disables adjacent controls when the queue is unavaila
 });
 
 test("music status CSS allows lyric text to wrap instead of clipping one line", () => {
-  const css = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "styles.css"), "utf8");
+  const css = readRendererStyles("widgets");
 
   assert.match(css, /\.music-status-bar__lyric[\s\S]*white-space:\s*normal/);
   assert.match(css, /\.music-status-bar[\s\S]*width:\s*min\(400px/);
@@ -78,25 +84,67 @@ test("renderMusicStatusBar separates track metadata from lyric and translation l
 
   assert.match(html, /class="music-status-bar__meta"/);
   assert.match(html, /class="music-status-bar__lyric"/);
-  assert.match(html, /class="music-status-bar__lyric-line"/);
+  assert.match(html, /class="music-status-bar__lyric-line(?:\s|\")/);
   assert.match(html, /class="music-status-bar__translation"/);
   assert.match(html, /Song Title.*Artist Name/);
   assert.doesNotMatch(html, /I did not think we would get to pull it apart \/ Never thought/);
   assert.match(html, /I did not think we would get to pull it apart[\s\S]*Never thought we would separate this world/);
 });
 
-test("renderMusicStatusBar applies user lyric color and size as CSS variables", () => {
+test("renderMusicStatusBar renders current and upcoming lyric rows with distinct states", () => {
+  const html = renderMusicStatusBar({
+    lyric: "current lyric",
+    translation: "current translation",
+    nextLyric: "upcoming lyric",
+    nextTranslation: "upcoming translation",
+  });
+
+  assert.match(html, /class="music-status-bar__lyric-line is-current"[^>]*>current lyric/);
+  assert.match(html, /class="music-status-bar__lyric-line is-upcoming"[^>]*>upcoming lyric/);
+  assert.match(html, /current translation/);
+  assert.match(html, /upcoming translation/);
+});
+
+test("renderMusicStatusBar exposes user lyric values as data attributes for CSP-safe styling", () => {
   const html = renderMusicStatusBar({
     title: "Song",
     lyric: "line",
     lyricStyle: { color: "#7c3aed", fontSize: 16, controlSize: 38 },
   });
 
-  assert.match(html, /style="--music-lyric-color: #7c3aed; --music-lyric-size: 16px; --music-control-size: 38px;"/);
+  assert.match(html, /data-lyric-color="#7c3aed"/);
+  assert.match(html, /data-lyric-size="16"/);
+  assert.match(html, /data-control-size="38"/);
+  assert.doesNotMatch(html, /\sstyle=/i);
+});
+
+test("renderMusicStatusBar includes cover art and a bounded progress indicator", () => {
+  const html = renderMusicStatusBar({
+    title: "Song",
+    coverUrl: "https://example.com/cover.jpg",
+    currentTime: 30,
+    duration: 120,
+    playMode: "shuffle",
+  });
+
+  assert.match(html, /class="music-status-bar__cover"/);
+  assert.match(html, /data-cover-url="https:\/\/example\.com\/cover\.jpg"/);
+  assert.match(html, /class="music-status-bar__progress"/);
+  assert.match(html, /data-progress="25"/);
+  assert.match(html, /随机/);
+  assert.doesNotMatch(html, /\sstyle=/i);
+});
+
+test("renderMusicStatusBar exposes a readable current-time and duration label", () => {
+  const html = renderMusicStatusBar({ currentTime: 65, duration: 180 });
+
+  assert.match(html, /class="music-status-bar__progress-time"/);
+  assert.match(html, />1:05 \/ 3:00</);
+  assert.match(html, /data-duration="180"/);
 });
 
 test("music status CSS exposes decorative lyric controls styling", () => {
-  const css = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "styles.css"), "utf8");
+  const css = readRendererStyles("widgets");
 
   assert.match(css, /\.music-status-bar::before/);
   assert.match(css, /\.music-status-bar__sparkles/);
@@ -106,7 +154,16 @@ test("music status CSS exposes decorative lyric controls styling", () => {
   assert.match(css, /var\(--music-lyric-color/);
   assert.match(css, /var\(--music-lyric-size/);
   assert.match(css, /var\(--music-control-size/);
+  assert.match(css, /music-status-bar__lyric-line\.is-current/);
+  assert.match(css, /music-status-bar__lyric-line\.is-upcoming/);
   assert.match(css, /\.music-status-bar__button:disabled/);
+  assert.match(css, /\.music-status-bar__controls[\s\S]*grid-template-columns:\s*repeat\(7,/);
   assert.match(css, /\.music-status-bar__widgets/);
   assert.match(css, /data-music-action="toggleLike"/);
+});
+
+test("music panel CSS hides unavailable cover placeholders", () => {
+  const css = readRendererStyles("music");
+
+  assert.match(css, /music-panel-cover-placeholder\[hidden\][\s\S]*display:\s*none\s*!important/);
 });

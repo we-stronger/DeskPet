@@ -7,7 +7,7 @@ const root = path.join(__dirname, "..");
 
 test("chat window exposes remembered and temporary mode controls with memory actions", () => {
   const html = fs.readFileSync(path.join(root, "src", "renderer", "chat.html"), "utf8");
-  const css = fs.readFileSync(path.join(root, "src", "renderer", "styles.css"), "utf8");
+  const css = fs.readFileSync(path.join(root, "src", "renderer", "styles", "chat.css"), "utf8");
 
   assert.match(html, /id="chat-mode-remembered"/);
   assert.match(html, /id="chat-mode-temporary"/);

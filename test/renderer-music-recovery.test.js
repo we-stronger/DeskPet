@@ -16,10 +16,12 @@ test("renderer centralizes post-interruption recovery for music, sleep, and idle
   assert.match(source, /play\("idle"\);/);
 });
 
-test("drag end and temporary actions reuse the same ambient recovery helper", () => {
+test("drag end uses the focus-aware bridge while temporary actions recover ambient state", () => {
   const source = fs.readFileSync(path.join(root, "src", "renderer", "renderer.js"), "utf8");
+  const interactionRuntime = fs.readFileSync(path.join(root, "src", "renderer", "pet-interaction-runtime.js"), "utf8");
 
   assert.match(source, /temporaryActionTimer = setTimeout\(\(\) => \{[\s\S]*recoverAmbientAction\(\)/);
-  assert.match(source, /else if \(releaseAction === "idle"\) \{[\s\S]*recoverAmbientAction\(\);/);
-  assert.doesNotMatch(source, /else if \(releaseAction === "idle"\) \{[\s\S]*play\("idle"\);/);
+  assert.match(source, /petInteractionRuntime\.pointerUp\(event\)/);
+  assert.match(interactionRuntime, /focusPetBridge\?\.endDrag\?\.\(this\.currentFocusSnapshot\(\)\)/);
+  assert.doesNotMatch(source, /if \(releaseAction === "idle"\) \{[\s\S]*play\("idle"\);/);
 });

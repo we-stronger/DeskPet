@@ -91,6 +91,32 @@ test("audio player toggles pause and resume for the current source", async () =>
   assert.equal(player.getState().playing, true);
 });
 
+test("audio player seeks to a bounded time and emits the updated position", async () => {
+  let instance = null;
+  class FakeAudio {
+    constructor() {
+      this.currentTime = 0;
+      this.duration = 100;
+      instance = this;
+    }
+    play() {
+      return Promise.resolve();
+    }
+    pause() {}
+    addEventListener() {}
+  }
+
+  const player = loadAudioPlayer({ Audio: FakeAudio });
+  await player.playUrl("https://example.com/song.mp3");
+
+  const result = player.seekTo(140);
+
+  assert.equal(result.success, true);
+  assert.equal(result.currentTime, 100);
+  assert.equal(instance.currentTime, 100);
+  assert.equal(player.getState().currentTime, 100);
+});
+
 test("audio player exposes the current lyric line from LRC timestamps", async () => {
   const listeners = {};
   class FakeAudio {
@@ -122,6 +148,12 @@ test("audio player exposes the current lyric line from LRC timestamps", async ()
     translation: "第一句",
   });
 
+  assert.deepEqual(player.getState().nextLyric, {
+    time: 3.5,
+    text: "second line",
+    translation: "第二句",
+  });
+
   listeners.audio.currentTime = 3.8;
   listeners.timeupdate();
   assert.deepEqual(player.getState().currentLyric, {
@@ -129,6 +161,7 @@ test("audio player exposes the current lyric line from LRC timestamps", async ()
     text: "second line",
     translation: "第二句",
   });
+  assert.equal(player.getState().nextLyric, null);
 });
 
 test("audio player notifies subscribers when lyric progress changes", async () => {

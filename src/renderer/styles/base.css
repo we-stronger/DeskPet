@@ -1,0 +1,182 @@
+:root {
+  --font-ui: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-bg-strong: rgba(255, 255, 255, 0.86);
+  --glass-border: rgba(255, 255, 255, 0.46);
+  --glass-highlight: rgba(255, 255, 255, 0.72);
+  --text-main: #1d2430;
+  --text-muted: #657083;
+  --text-soft: #8791a3;
+  --surface-control: rgba(255, 255, 255, 0.58);
+  --surface-control-hover: rgba(255, 255, 255, 0.78);
+  --surface-pressed: rgba(226, 233, 242, 0.82);
+  --track-bg: rgba(110, 123, 148, 0.18);
+  --accent: #4f8cff;
+  --accent-2: #22a57a;
+  --accent-3: #d86492;
+  --accent-soft: rgba(79, 140, 255, 0.18);
+  --success-soft: rgba(34, 165, 122, 0.16);
+  --danger-soft: rgba(216, 100, 146, 0.14);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --shadow-floating: 0 18px 44px rgba(29, 36, 48, 0.18), 0 2px 8px rgba(29, 36, 48, 0.08);
+  --shadow-soft: 0 8px 22px rgba(29, 36, 48, 0.13), inset 0 1px 0 var(--glass-highlight);
+  --motion: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+  --bubble-bg-start: rgba(255, 248, 231, 0.94);
+  --bubble-bg-end: rgba(255, 233, 200, 0.94);
+  --bubble-border: rgba(216, 158, 100, 0.34);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --glass-bg: rgba(24, 28, 36, 0.66);
+    --glass-bg-strong: rgba(28, 32, 42, 0.84);
+    --glass-border: rgba(255, 255, 255, 0.16);
+    --glass-highlight: rgba(255, 255, 255, 0.12);
+    --text-main: #edf2f7;
+    --text-muted: #b8c1d1;
+    --text-soft: #8d98aa;
+    --surface-control: rgba(255, 255, 255, 0.08);
+    --surface-control-hover: rgba(255, 255, 255, 0.13);
+    --surface-pressed: rgba(255, 255, 255, 0.16);
+    --track-bg: rgba(255, 255, 255, 0.16);
+    --accent-soft: rgba(95, 156, 255, 0.24);
+    --success-soft: rgba(39, 190, 141, 0.22);
+    --danger-soft: rgba(231, 112, 154, 0.22);
+    --shadow-floating: 0 18px 46px rgba(0, 0, 0, 0.36), 0 2px 8px rgba(0, 0, 0, 0.24);
+    --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.28), inset 0 1px 0 var(--glass-highlight);
+    --bubble-bg-start: rgba(58, 46, 38, 0.92);
+    --bubble-bg-end: rgba(72, 56, 44, 0.92);
+    --bubble-border: rgba(180, 140, 100, 0.30);
+  }
+}
+
+@keyframes panelIn {
+  from { opacity: 0; transform: translateY(-6px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.settings-close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--motion);
+}
+
+.settings-close:hover {
+  background: var(--surface-control-hover);
+  color: var(--text-main);
+  transform: scale(1.04);
+}
+
+.settings-close:active {
+  transform: scale(0.96);
+  background: var(--surface-pressed);
+}
+
+/* Keep the idle live region accessible without allowing it to affect layout. */
+.operation-feedback {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.operation-feedback[data-state]:not([data-state="idle"]) {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  height: auto;
+  max-width: calc(100vw - 24px);
+  padding: 8px 10px;
+  margin: 0;
+  overflow: visible;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  clip: auto;
+  clip-path: none;
+  background: var(--glass-bg-strong);
+  box-shadow: var(--shadow-soft);
+  color: var(--text-main);
+  font: 12px/1.4 var(--font-ui);
+  white-space: normal;
+  transform: translateX(-50%);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  pointer-events: auto;
+}
+
+.operation-feedback[data-state="pending"] {
+  border-color: rgba(79, 140, 255, 0.34);
+  color: var(--accent);
+}
+
+.operation-feedback[data-state="success"] {
+  border-color: rgba(34, 165, 122, 0.32);
+  background: var(--success-soft);
+  color: var(--accent-2);
+}
+
+.operation-feedback[data-state="error"],
+.operation-feedback[data-state="retry"] {
+  border-color: rgba(216, 100, 146, 0.34);
+  background: var(--danger-soft);
+  color: var(--accent-3);
+}
+
+.operation-feedback[data-state="info"] {
+  border-color: rgba(79, 140, 255, 0.28);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.operation-feedback[data-state="error"] button {
+  padding: 4px 8px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.operation-feedback[data-state="error"] button:hover {
+  background: var(--surface-control-hover);
+}
+
+.operation-feedback[data-state="error"] button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

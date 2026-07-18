@@ -245,7 +245,7 @@
       return this.result("idle");
     }
 
-    tick() {
+    tick(context = {}) {
       if (this.sleeping) {
         this.changeEnergy(this.sleepEnergyRecoveryPerTick);
         return { action: "sleep" };
@@ -262,6 +262,10 @@
         this.sleeping = true;
         this.resetCombo();
         return { action: "sleep" };
+      }
+
+      if (context.focusActive === true) {
+        return { action: "idle", reason: "focus" };
       }
 
       if (this.mood <= this.poutMoodThreshold) {

@@ -39,12 +39,25 @@
   let contentEl;
   let profileEl;
   let searchInput;
+  let operationFeedback;
 
   function setStatus(text, tone) {
     if (!statusEl) return;
-    statusEl.textContent = text || "";
     if (tone) statusEl.dataset.tone = tone;
     else delete statusEl.dataset.tone;
+    if (!operationFeedback) {
+      statusEl.textContent = text || "";
+      return;
+    }
+    if (!text) {
+      operationFeedback.clear();
+    } else if (tone === "error") {
+      operationFeedback.error(text);
+    } else if (tone === "ok") {
+      operationFeedback.success(text);
+    } else {
+      operationFeedback.info(text);
+    }
   }
 
   function setProfile(text) {
@@ -54,6 +67,13 @@
   function setContent(html) {
     if (!contentEl) return;
     contentEl.innerHTML = html;
+    contentEl.querySelectorAll("img[data-cover-url]").forEach((image) => {
+      image.addEventListener("error", () => {
+        image.hidden = true;
+        const placeholder = image.nextElementSibling;
+        if (placeholder) placeholder.hidden = false;
+      }, { once: true });
+    });
     refreshLikedButtons();
   }
 
@@ -382,6 +402,18 @@
   function errorText(error, fallback) {
     if (!error) return fallback || "操作失败。";
     const map = {
+      "api-401": "登录状态无效，请重新扫码登录。",
+      "api-406": "当前账号没有权限执行此操作。",
+      "api-462": "网易云请求被限制，请稍后再试。",
+      "401": "登录状态无效，请重新扫码登录。",
+      "406": "当前账号没有权限执行此操作。",
+      "462": "网易云请求被限制，请稍后再试。",
+      auth: "请先登录网易云音乐。",
+      forbidden: "这首歌暂时无法播放。",
+      "not-found": "没有找到可用的音频资源。",
+      network: "网络连接失败，请稍后重试。",
+      unsupported: "没有可用的音频来源。",
+      cancelled: "播放请求已被新的操作替换。",
       "not-logged-in": "请先扫码登录。",
       "session-expired": "登录状态过期了。",
       "network-error": "好像没连上。",
@@ -389,6 +421,22 @@
       "empty-playlist-id": "没有选中歌单。",
     };
     return map[error] || `操作失败：${error}`;
+  }
+
+  async function runBusyAction(button, action) {
+    if (button && button.disabled) return null;
+    if (button) {
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+    }
+    try {
+      return await action();
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+      }
+    }
   }
 
   // --- View dispatcher: looks at the top of the stack and renders it ---
@@ -476,7 +524,7 @@
     const addSong = target.closest(".music-panel-add-song");
     if (addSong) { showAddToPlaylistChooser(addSong.getAttribute("data-song-id")); return; }
     const addTarget = target.closest(".music-panel-add-target");
-    if (addTarget) { addCurrentSongToPlaylist(addTarget.getAttribute("data-playlist-id")); return; }
+    if (addTarget) { addCurrentSongToPlaylist(addTarget.getAttribute("data-playlist-id"), addTarget); return; }
     const removeSong = target.closest(".music-panel-remove-song");
     if (removeSong) { removeCurrentSongFromPlaylist(removeSong.getAttribute("data-song-id"), removeSong.closest(".music-panel-song")); return; }
     const playMode = target.closest(".music-panel-play-mode");
@@ -530,7 +578,7 @@
   async function likeCurrentSong(id, button) {
     if (!id || typeof bridge.likeSong !== "function") return;
     const nextLiked = button?.getAttribute("aria-pressed") !== "true";
-    const result = await bridge.likeSong(id, nextLiked).catch(() => null);
+    const result = await runBusyAction(button, () => bridge.likeSong(id, nextLiked).catch(() => null));
     if (result && result.success && button) setLikedButtonState(button, nextLiked);
     setStatus(
       result && result.success ? (nextLiked ? "已加入我喜欢。" : "已取消喜欢。") : errorText(result && result.error),
@@ -546,7 +594,7 @@
     const state = service.getPlaybackState();
     const item = (kind === "history" ? state.history : state.queue).find((entry) => entry.id === id);
     if (!item) return;
-    const result = await service.playSongWithFallback(id, {
+    const result = await runBusyAction(button, () => service.playSongWithFallback(id, {
       bridge,
       audioPlayer: root.DeskpetAudioPlayer,
       queue: kind === "queue" ? state.queue : undefined,
@@ -555,7 +603,7 @@
       meta: { title: item.title, artist: item.artist },
       setStatus,
       logger: root.console,
-    });
+    }));
     if (result && result.success) {
       setStatus(`正在播放：${item.title || "未命名歌曲"}`, "ok");
       if (kind === "queue") renderTop();
@@ -588,14 +636,14 @@
     });
   }
 
-  async function addCurrentSongToPlaylist(playlistId) {
+  async function addCurrentSongToPlaylist(playlistId, button) {
     if (!pendingAddSongId || !playlistId || typeof bridge.manipulatePlaylistTracks !== "function") return;
     setStatus("正在加入歌单...", "info");
-    const result = await bridge.manipulatePlaylistTracks({
+    const result = await runBusyAction(button, () => bridge.manipulatePlaylistTracks({
       op: "add",
       playlistId,
       songIds: [pendingAddSongId],
-    }).catch(() => null);
+    }).catch(() => null));
     if (result && result.success) {
       pendingAddSongId = "";
       stack.pop();
@@ -614,7 +662,10 @@
     }
     const songName = row?.querySelector("strong")?.textContent?.trim() || id;
     if (!confirmPlaylistSongRemoval(songName)) return;
-    const result = await bridge.manipulatePlaylistTracks({ op: "del", playlistId, songIds: [id] }).catch(() => null);
+    const result = await runBusyAction(
+      row?.querySelector(".music-panel-remove-song"),
+      () => bridge.manipulatePlaylistTracks({ op: "del", playlistId, songIds: [id] }).catch(() => null),
+    );
     if (result && result.success) {
       row?.remove();
       setStatus("已从歌单删除。", "ok");
@@ -640,11 +691,13 @@
     const title = element.querySelector("strong, .music-window__fm-card__title")?.textContent?.trim() || "";
     const metaText = element.querySelector("span, .music-window__fm-card__meta")?.textContent || "";
     const artist = metaText.split("路")[0].split("·")[0].trim();
-    return { title, artist };
+    const coverUrl = element?.getAttribute("data-cover-url") || "";
+    return { title, artist, coverUrl };
   }
 
   async function openSongInNetEase(id, sourceElement = null) {
     if (!id) return;
+    sourceElement?.setAttribute("aria-busy", "true");
     const result = await root.DeskpetMusicPlaybackService.playSongWithFallback(id, {
       bridge,
       audioPlayer: root.DeskpetAudioPlayer,
@@ -654,6 +707,7 @@
       setStatus,
       logger: root.console,
     });
+    sourceElement?.removeAttribute("aria-busy");
     if (result && result.success) {
       const isAudioPlayback = result.method === "audio" || result.method === "audio-host" || result.method === "web-player";
       const visibleWebFallback = result.method === "web-player-visible";
@@ -746,6 +800,15 @@
     return true;
   }
 
+  if (typeof bridge.onMusicAuthStateChanged === "function") {
+    bridge.onMusicAuthStateChanged(async () => {
+      await refreshProfile();
+      if (currentTab === "playlists" || currentTab === "daily" || currentTab === "fm") {
+        await renderTop();
+      }
+    });
+  }
+
   // --- Boot ---
 
   async function init() {
@@ -755,6 +818,9 @@
     backBtn = document.querySelector("#music-window-back-btn");
     navTitle = document.querySelector("#music-window-nav-title");
     statusEl = document.querySelector("#music-window-status");
+    operationFeedback = typeof root.OperationFeedback === "function"
+      ? new root.OperationFeedback({ host: document.querySelector("[data-operation-feedback]") })
+      : null;
     contentEl = document.querySelector("#music-window-content");
     profileEl = document.querySelector("#music-window-profile");
     searchInput = document.querySelector("#music-window-search-input");
@@ -789,6 +855,14 @@
 
     // Initial view: empty search.
     await root.DeskpetMusicPlaybackService?.connectPlaybackState(bridge);
+    if (typeof bridge.onMusicPlaybackStateChanged === "function") {
+      bridge.onMusicPlaybackStateChanged(() => {
+        const top = stack[stack.length - 1];
+        if (top && (top.name === "queue" || top.name === "history")) {
+          renderTop();
+        }
+      });
+    }
     stack.push({ tab: "search", name: "search", keyword: "" });
     refreshProfile();
     renderTop();
